@@ -30,11 +30,12 @@ struct TaskDetailView: View {
                         Text(task.title)
                             .font(.title2)
                             .fontWeight(.semibold)
-                            .foregroundColor(.primary)
+                            .foregroundStyle(.primary)
                         
                         Spacer()
                     }
                     .contentShape(Rectangle())
+                    .padding(.vertical, 4)
                     .onTapGesture {
                         editingTitle = true
                     }
@@ -44,7 +45,7 @@ struct TaskDetailView: View {
                     HStack(spacing: 8) {
                         Text("Checklist")
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                         
                         Spacer()
                         
@@ -52,13 +53,13 @@ struct TaskDetailView: View {
                             Text("\(task.totalChecklistCount - task.incompleteChecklistCount)")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
-                                .foregroundColor(.primary)
+                                .foregroundStyle(.primary)
                             Text("/")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                             Text("\(task.totalChecklistCount)")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -68,23 +69,30 @@ struct TaskDetailView: View {
                 Section {
                     ForEach(task.checklistItems.sorted(by: { $0.order < $1.order })) { item in
                         ChecklistItemRow(item: item, task: task)
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                     }
                     .onDelete(perform: deleteChecklistItems)
+                }
+            } else {
+                Section {
+                    ContentUnavailableView {
+                        Label("No Checklist Items", systemImage: "checklist")
+                    } description: {
+                        Text("Tap the + button to add checklist items")
+                    }
                 }
             }
         }
         .listStyle(.insetGrouped)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     addChecklistItem()
                 } label: {
-                    Image(systemName: "plus.rectangle.on.rectangle")
+                    Image(systemName: "plus.circle.fill")
                         .fontWeight(.medium)
                 }
-                .accessibilityLabel("Add Checklist Item")
             }
         }
     }
@@ -126,18 +134,18 @@ struct ChecklistItemRow: View {
     @FocusState private var isFocused: Bool
     
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
                     item.isCompleted.toggle()
                     task.updateCompletionStatus()
                 }
             } label: {
                 Image(systemName: item.isCompleted ? "checkmark.square.fill" : "square")
                     .font(.title3)
-                    .foregroundColor(item.isCompleted ? .accentColor : .secondary)
+                    .foregroundStyle(item.isCompleted ? Color.accentColor : .secondary)
                     .symbolEffect(.bounce, value: item.isCompleted)
-                    .frame(width: 32, height: 32)
+                    .frame(minWidth: 36, minHeight: 36)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -146,7 +154,7 @@ struct ChecklistItemRow: View {
                 TextField("Checklist item", text: $newTitle)
                     .focused($isFocused)
                     .font(.body)
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                     .onSubmit {
                         saveTitle()
                     }
@@ -175,20 +183,20 @@ struct ChecklistItemRow: View {
                 Text(item.title)
                     .font(.body)
                     .strikethrough(item.isCompleted)
-                    .foregroundColor(item.isCompleted ? .secondary : .primary)
+                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
+                    .padding(.vertical, 6)
                     .onTapGesture {
                         editingTitle = true
                     }
-                    .padding(.vertical, 4)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onTapGesture {
             if !editingTitle && !item.title.isEmpty {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
                     item.isCompleted.toggle()
                     task.updateCompletionStatus()
                 }

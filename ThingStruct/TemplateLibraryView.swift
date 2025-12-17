@@ -21,31 +21,32 @@ struct TemplateLibraryView: View {
     var body: some View {
         NavigationStack {
             List {
+                ForEach(templates) { template in
+                    TemplateRowView(template: template, onTap: {
+                        createTaskFromTemplate(template)
+                    })
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button {
+                            editingTemplate = template
+                        } label: {
+                            Label("Edit", systemImage: "pencil.circle.fill")
+                        }
+                        .tint(.accentColor)
+                    }
+                }
+                .onDelete(perform: deleteTemplates)
+                
                 if templates.isEmpty {
                     Section {
                         ContentUnavailableView {
                             Label("No Templates", systemImage: "list.bullet.rectangle.portrait")
                         } description: {
-                            Text("Tap the + button to create your first template")
+                            Text("Tap the + button to create a template")
                         }
                     }
-                } else {
-                    ForEach(templates) { template in
-                        TemplateRowView(template: template, onTap: {
-                            createTaskFromTemplate(template)
-                        })
-                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                            Button {
-                                editingTemplate = template
-                            } label: {
-                                Label("Edit", systemImage: "pencil")
-                            }
-                            .tint(.accentColor)
-                        }
-                    }
-                    .onDelete(perform: deleteTemplates)
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Template Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -53,14 +54,15 @@ struct TemplateLibraryView: View {
                     Button("Done") {
                         dismiss()
                     }
+                    .fontWeight(.medium)
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddTemplate = true
                     } label: {
-                        Image(systemName: "plus.circle")
+                        Image(systemName: "plus.circle.fill")
+                            .fontWeight(.medium)
                     }
-                    .accessibilityLabel("Add Template")
                 }
             }
             .sheet(isPresented: $showingAddTemplate) {
@@ -96,13 +98,19 @@ struct TemplateRowView: View {
             onTap()
         } label: {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(template.title)
-                        .foregroundColor(.primary)
+                        .font(.body)
+                        .foregroundStyle(.primary)
                     if !template.checklistItems.isEmpty {
-                        Text("\(template.checklistItems.count) items")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        HStack(spacing: 4) {
+                            Image(systemName: "checklist")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text("\(template.checklistItems.count) items")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 Spacer()

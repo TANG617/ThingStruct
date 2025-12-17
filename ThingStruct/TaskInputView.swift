@@ -41,11 +41,16 @@ struct TaskInputView: View {
                     TextField(titlePlaceholder, text: $title)
                         .focused($isTitleFocused)
                         .submitLabel(.done)
+                        .font(.body)
                         .onSubmit {
                             if checklistItems.isEmpty {
                                 save()
                             }
                         }
+                } header: {
+                    Text("Title")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
                 
                 Section {
@@ -80,17 +85,22 @@ struct TaskInputView: View {
                     Button {
                         addChecklistItem()
                     } label: {
-                        Label("Add Item", systemImage: "plus.circle")
-                            .foregroundColor(.accentColor)
+                        Label("Add Item", systemImage: "plus.circle.fill")
+                            .foregroundStyle(Color.accentColor)
                     }
                 } header: {
                     Text("Checklist")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 } footer: {
                     if checklistItems.isEmpty {
                         Text("Add checklist items to create a structured task")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
+            .formStyle(.grouped)
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -98,11 +108,13 @@ struct TaskInputView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .fontWeight(.medium)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(confirmButtonTitle) {
                         save()
                     }
+                    .fontWeight(.semibold)
                 }
             }
             .task {
