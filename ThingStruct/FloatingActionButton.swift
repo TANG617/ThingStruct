@@ -41,12 +41,6 @@ struct FloatingActionButton: View {
                 Label("From State Template", systemImage: "doc.on.doc")
             }
             
-            // From Routine Template
-            Button {
-                showingRoutineTemplatePicker = true
-            } label: {
-                Label("From Routine Template", systemImage: "calendar.day.timeline.left")
-            }
         } label: {
             // Liquid Glass FAB Button
             Image(systemName: "plus")
