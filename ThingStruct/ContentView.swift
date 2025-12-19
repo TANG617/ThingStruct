@@ -16,6 +16,18 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - 显示配置（可调试）
+
+/// 控制 ContentView 显示多少条目
+/// 调试时可以设置 maxPendingCount = nil 来显示全部 pending
+private enum DisplayConfig {
+    /// 最多显示多少个 pending states，nil = 显示全部
+    static let maxPendingCount: Int? = nil  // 调试模式：显示全部
+    
+    /// 最多显示多少个已完成的 states
+    static let maxCompletedCount: Int = 3
+}
+
 // MARK: - 主内容视图
 
 /*
@@ -88,6 +100,12 @@ struct ContentView: View {
      */
     @Query(sort: \StateItem.order) private var allStates: [StateItem]
     
+    /// 查询所有 RoutineTemplate（用于自动生成和手动应用）
+    @Query private var routineTemplates: [RoutineTemplate]
+    
+    /// 状态流管理器
+    @State private var streamManager = StateStreamManager()
+    
     /*
      * @State：本地状态管理
      *
@@ -105,8 +123,8 @@ struct ContentView: View {
      * - false表示初始时隐藏
      * - 当设置为true时，弹窗自动显示
      */
-    @State private var showingAddState = false
-    @State private var showingTemplateLibrary = false
+    @State private var showingStateTemplateLibrary = false
+    @State private var showingRoutineTemplateLibrary = false
     
     /*
      * StateItem?：可选类型（Optional）
@@ -191,6 +209,22 @@ struct ContentView: View {
     /// 已完成的状态
     private var completedStates: [StateItem] {
         todayStates.filter { $0.isCompleted }
+    }
+    
+    // MARK: - 显示窗口（可配置数量）
+    
+    /// 可见的 pending states（根据配置限制数量）
+    private var visiblePendingStates: [StateItem] {
+        if let max = DisplayConfig.maxPendingCount {
+            return Array(pendingStates.prefix(max))
+        }
+        return pendingStates  // 显示全部
+    }
+    
+    /// 可见的 completed states（根据配置限制数量）
+    private var visibleCompletedStates: [StateItem] {
+        // 显示最近完成的 N 个
+        Array(completedStates.suffix(DisplayConfig.maxCompletedCount))
     }
     
     /// 今天的标题（如 "Dec 18, Thu"）
@@ -347,9 +381,9 @@ struct ContentView: View {
                 }
                 
                 // 待处理状态列表
-                if !pendingStates.isEmpty {
+                if !visiblePendingStates.isEmpty {
                     Section {
-                        ForEach(pendingStates) { stateItem in
+                        ForEach(visiblePendingStates) { stateItem in
                             CompactStateRowView(stateItem: stateItem, onTap: {
                                 selectedState = stateItem
                             })
@@ -394,16 +428,22 @@ struct ContentView: View {
                         .onMove(perform: movePendingStates)
                         .onDelete(perform: deletePendingStates)
                     } header: {
-                        Text("Pending")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text("Pending")
+                            if pendingStates.count > visiblePendingStates.count {
+                                Text("(\(pendingStates.count) total)")
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     }
                 }
                 
                 // 已完成状态列表
-                if !completedStates.isEmpty {
+                if !visibleCompletedStates.isEmpty {
                     Section {
-                        ForEach(completedStates) { stateItem in
+                        ForEach(visibleCompletedStates) { stateItem in
                             CompactStateRowView(stateItem: stateItem, onTap: {
                                 selectedState = stateItem
                             })
@@ -416,11 +456,17 @@ struct ContentView: View {
                                 .tint(.accentColor)
                             }
                         }
-                        .onDelete(perform: deleteCompletedStates)
+                        .onDelete(perform: deleteVisibleCompletedStates)
                     } header: {
-                        Text("Completed")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text("Completed")
+                            if completedStates.count > visibleCompletedStates.count {
+                                Text("(\(completedStates.count) total)")
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     }
                 }
                 
@@ -483,25 +529,20 @@ struct ContentView: View {
                  * - .bottomBar：底部工具栏
                  */
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingTemplateLibrary = true
+                    Menu {
+                        Button {
+                            showingStateTemplateLibrary = true
+                        } label: {
+                            Label("State Templates", systemImage: "doc.on.doc")
+                        }
+                        
+                        Button {
+                            showingRoutineTemplateLibrary = true
+                        } label: {
+                            Label("Routine Templates", systemImage: "calendar.day.timeline.left")
+                        }
                     } label: {
-                        /*
-                         * Image(systemName:)：SF Symbols图标
-                         *
-                         * SF Symbols是Apple的矢量图标库
-                         * 可在 SF Symbols 应用中查看所有图标
-                         */
                         Image(systemName: "list.bullet.rectangle.portrait")
-                            .fontWeight(.medium)
-                    }
-                    .tint(.accentColor)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingAddState = true
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
                             .fontWeight(.medium)
                     }
                     .tint(.accentColor)
@@ -518,11 +559,30 @@ struct ContentView: View {
              * 你不需要调用 present() 方法
              * 只需要改变状态，UI自动响应
              */
-            .sheet(isPresented: $showingAddState) {
-                AddStateView()
+            .sheet(isPresented: $showingStateTemplateLibrary) {
+                StateTemplateLibraryView()
             }
-            .sheet(isPresented: $showingTemplateLibrary) {
-                TemplateLibraryView()
+            .sheet(isPresented: $showingRoutineTemplateLibrary) {
+                RoutineTemplateLibraryView()
+            }
+            /*
+             * .overlay：覆盖层
+             *
+             * 在视图上方叠加另一个视图
+             * 这里用于显示浮动操作按钮(FAB)
+             *
+             * alignment: .bottomTrailing：定位到右下角
+             */
+            .overlay(alignment: .bottomTrailing) {
+                FloatingActionButton()
+            }
+            .onAppear {
+                // 初始化/刷新状态流
+                streamManager.refreshIfNeeded(
+                    routineTemplates: routineTemplates,
+                    existingStates: allStates,
+                    modelContext: modelContext
+                )
             }
         }
     }
@@ -539,7 +599,7 @@ struct ContentView: View {
      */
     private func movePendingStates(from source: IndexSet, to destination: Int) {
         // 复制数组（值类型，自动复制）
-        var states = pendingStates
+        var states = visiblePendingStates
         
         // Array.move：移动元素位置
         states.move(fromOffsets: source, toOffset: destination)
@@ -565,16 +625,16 @@ struct ContentView: View {
     private func deletePendingStates(offsets: IndexSet) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             for index in offsets {
-                modelContext.delete(pendingStates[index])
+                modelContext.delete(visiblePendingStates[index])
             }
         }
     }
     
-    /// 删除已完成状态
-    private func deleteCompletedStates(offsets: IndexSet) {
+    /// 删除可见的已完成状态
+    private func deleteVisibleCompletedStates(offsets: IndexSet) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             for index in offsets {
-                modelContext.delete(completedStates[index])
+                modelContext.delete(visibleCompletedStates[index])
             }
         }
     }
@@ -879,5 +939,5 @@ struct CompactStateRowView: View {
          * inMemory: true 表示数据只在内存中
          * 预览结束后数据消失，不影响真实数据
          */
-        .modelContainer(for: [StateItem.self, ChecklistItem.self, StateTemplate.self], inMemory: true)
+        .modelContainer(for: [StateItem.self, ChecklistItem.self, StateTemplate.self, RoutineItem.self, RoutineTemplate.self], inMemory: true)
 }

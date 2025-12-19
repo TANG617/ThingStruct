@@ -117,9 +117,11 @@ struct ThingStructApp: App {
          * C/C++对比：类似于 typeid(StateItem) 或模板中的类型参数
          */
         let schema = Schema([
-            StateItem.self,       // 状态表
-            ChecklistItem.self,   // 清单项表
-            StateTemplate.self,   // 模板表
+            StateItem.self,        // 状态表
+            ChecklistItem.self,    // 清单项表
+            StateTemplate.self,    // 状态模板表
+            RoutineItem.self,      // 例程表
+            RoutineTemplate.self,  // 例程模板表
         ])
         
         /*
