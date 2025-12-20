@@ -75,10 +75,13 @@ final class ChecklistItem {
     /// 是否已完成
     /// Bool: 布尔类型，只有 true 和 false 两个值
     var isCompleted: Bool
+    var completedDate: Date?
     
     /// 排序顺序（用于列表中的显示顺序）
     /// Int: 整数类型，在64位系统上是64位有符号整数
     var order: Int
+
+    
     
     // MARK: - 构造器（Initializer）
     /*
@@ -107,6 +110,7 @@ final class ChecklistItem {
         self.id = UUID()           // UUID() 生成一个新的随机UUID
         self.title = title
         self.isCompleted = false   // 新创建的项默认未完成
+        self.completedDate = nil
         self.order = order
     }
 }

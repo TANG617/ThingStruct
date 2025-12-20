@@ -26,7 +26,7 @@ struct RoutineTemplatePickerView: View {
     // MARK: - Computed Properties
     
     private var today: Date {
-        Calendar.current.startOfDay(for: Date())
+        Calendar.current.startOfDay(for: Date.now)
     }
     
     // MARK: - Body

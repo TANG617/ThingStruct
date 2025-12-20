@@ -38,7 +38,7 @@ final class RoutineItem {
     /// - Parameters:
     ///   - title: 例程标题
     ///   - date: 所属日期，默认为当前日期
-    init(title: String = "", date: Date = Date()) {
+    init(title: String = "", date: Date = Date.now) {
         self.id = UUID()
         self.title = title
         self.date = Calendar.current.startOfDay(for: date)

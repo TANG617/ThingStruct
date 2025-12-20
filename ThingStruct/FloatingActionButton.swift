@@ -65,16 +65,11 @@ struct FloatingActionButton: View {
                 .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
         }
         .menuStyle(.automatic)
-        .padding(.trailing, 20)
-        .padding(.bottom, 24)
         .sheet(isPresented: $showingAddState) {
             AddStateView()
         }
         .sheet(isPresented: $showingStateTemplatePicker) {
             StateTemplatePickerView()
-        }
-        .sheet(isPresented: $showingRoutineTemplatePicker) {
-            RoutineTemplatePickerView()
         }
     }
 }

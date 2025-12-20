@@ -27,7 +27,7 @@ struct StateTemplatePickerView: View {
     // MARK: - Computed Properties
     
     private var today: Date {
-        Calendar.current.startOfDay(for: Date())
+        Calendar.current.startOfDay(for: Date.now)
     }
     
     private var todayStates: [StateItem] {

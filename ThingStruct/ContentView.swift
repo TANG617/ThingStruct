@@ -151,7 +151,7 @@ struct ContentView: View {
     
     /// 今天的日期（零点时刻）
     private var today: Date {
-        Calendar.current.startOfDay(for: Date())
+        Calendar.current.startOfDay(for: Date.now)
     }
     
     /// 今天的所有状态
@@ -236,12 +236,12 @@ struct ContentView: View {
         let formatter = DateFormatter()
         formatter.locale = Locale.current  // 使用用户的地区设置
         formatter.dateFormat = "MMM d"     // 格式：月份缩写 + 日期
-        let dateString = formatter.string(from: Date())
+        let dateString = formatter.string(from: Date.now)
         
         let weekdayFormatter = DateFormatter()
         weekdayFormatter.locale = Locale.current
         weekdayFormatter.dateFormat = "EEE"  // 星期缩写
-        let weekday = weekdayFormatter.string(from: Date())
+        let weekday = weekdayFormatter.string(from: Date.now)
         
         // 字符串插值：\(变量) 将变量值嵌入字符串
         return "\(dateString), \(weekday)"
@@ -544,6 +544,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "list.bullet.rectangle.portrait")
                             .fontWeight(.medium)
+                            .frame(width: 60, height: 60)
                     }
                     .tint(.accentColor)
                 }
@@ -572,9 +573,16 @@ struct ContentView: View {
              * 这里用于显示浮动操作按钮(FAB)
              *
              * alignment: .bottomTrailing：定位到右下角
+             * 
+             * 自适应padding说明：
+             * - .padding() 会自动遵循 safe area
+             * - 在有 Home Indicator 的设备（iPhone X及以后）：safe area bottom ≈ 34pt
+             * - 在老设备（有物理Home键）：safe area bottom = 0pt
+             * - 所以使用 .padding() 即可自动适配所有机型
              */
             .overlay(alignment: .bottomTrailing) {
                 FloatingActionButton()
+                    .padding()  // 自动适配所有iPhone机型的安全区域
             }
             .onAppear {
                 // 初始化/刷新状态流
@@ -800,6 +808,7 @@ struct ChecklistItemCompactRow: View {
                      * Swift的语法糖，更简洁
                      */
                     item.isCompleted.toggle()
+                    item.completedDate = Date.now
                     // 更新父状态的完成状态
                     stateItem.updateCompletionStatus()
                 }

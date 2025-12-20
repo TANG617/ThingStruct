@@ -85,7 +85,7 @@ enum Weekday: Int, Codable, CaseIterable, Identifiable {
     
     /// 获取今天的星期
     static var today: Weekday {
-        from(date: Date())
+        from(date: Date.now)
     }
     
     // MARK: - 排序后的列表（周一开始）

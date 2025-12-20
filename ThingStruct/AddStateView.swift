@@ -58,7 +58,7 @@ struct AddStateView: View {
     
     /// 今天的日期（零点时刻）
     private var today: Date {
-        Calendar.current.startOfDay(for: Date())
+        Calendar.current.startOfDay(for: Date.now)
     }
     
     /// 今天的状态数量（用于确定新状态的排序位置）
@@ -105,7 +105,7 @@ struct AddStateView: View {
             // 创建新的状态对象
             let newState = StateItem(
                 title: title,
-                date: Date(),                    // 当前日期
+                date: Date.now,                    // 当前日期
                 order: todayStates.count         // 排在今天所有状态之后
             )
             

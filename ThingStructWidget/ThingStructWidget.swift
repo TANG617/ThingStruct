@@ -27,16 +27,16 @@ struct ThingStructWidget: Widget {
 
 struct StateProvider: TimelineProvider {
     func placeholder(in context: Context) -> StateEntry {
-        StateEntry(date: Date(), state: nil)
+        StateEntry(date: Date.now, state: nil)
     }
     
     func getSnapshot(in context: Context, completion: @escaping (StateEntry) -> ()) {
-        let entry = StateEntry(date: Date(), state: getFirstState())
+        let entry = StateEntry(date: Date.now, state: getFirstState())
         completion(entry)
     }
     
     func getTimeline(in context: Context, completion: @escaping (Timeline<StateEntry>) -> ()) {
-        let currentDate = Date()
+        let currentDate = Date.now
         let entry = StateEntry(date: currentDate, state: getFirstState())
         
         // 每小时更新一次

@@ -63,7 +63,7 @@ final class StateItem {
     ///   - title: 状态标题
     ///   - date: 所属日期，默认为当前日期
     ///   - order: 排序顺序，默认为0
-    init(title: String, date: Date = Date(), order: Int = 0) {
+    init(title: String, date: Date = Date.now, order: Int = 0) {
         self.id = UUID()
         self.title = title
         self.order = order

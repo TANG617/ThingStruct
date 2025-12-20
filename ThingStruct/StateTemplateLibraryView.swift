@@ -35,7 +35,7 @@ struct StateTemplateLibraryView: View {
     // MARK: - Computed Properties
     
     private var today: Date {
-        Calendar.current.startOfDay(for: Date())
+        Calendar.current.startOfDay(for: Date.now)
     }
     
     private var todayStates: [StateItem] {
@@ -103,7 +103,7 @@ struct StateTemplateLibraryView: View {
     // MARK: - Actions
     
     private func createStateFromTemplate(_ template: StateTemplate) {
-        _ = template.createState(for: Date(), order: todayStates.count, modelContext: modelContext)
+        _ = template.createState(for: Date.now, order: todayStates.count, modelContext: modelContext)
         dismiss()
     }
     

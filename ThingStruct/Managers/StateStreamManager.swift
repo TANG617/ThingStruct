@@ -41,7 +41,7 @@ final class StateStreamManager {
     // MARK: - 初始化
     
     init() {
-        let now = Date()
+        let now = Date.now
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: now)
         
@@ -81,7 +81,7 @@ final class StateStreamManager {
     /// - Returns: 是否需要刷新
     func needsRefresh() -> Bool {
         let calendar = Calendar.current
-        let now = Date()
+        let now = Date.now
         
         // 检查是否跨天了
         let lastRefreshDay = calendar.startOfDay(for: lastRefreshTime)
@@ -103,7 +103,7 @@ final class StateStreamManager {
         guard needsRefresh() else { return }
         
         let calendar = Calendar.current
-        let now = Date()
+        let now = Date.now
         let today = calendar.startOfDay(for: now)
         
         // 滑动窗口：更新起始时间到昨天
@@ -172,7 +172,7 @@ final class StateStreamManager {
         allStates: [StateItem],
         modelContext: ModelContext
     ) -> [StateItem] {
-        let today = Calendar.current.startOfDay(for: Date())
+        let today = Calendar.current.startOfDay(for: Date.now)
         
         // 确定插入位置的 order
         let insertOrder: Int
@@ -219,6 +219,6 @@ final class StateStreamManager {
             )
         }
         
-        lastRefreshTime = Date()
+        lastRefreshTime = Date.now
     }
 }

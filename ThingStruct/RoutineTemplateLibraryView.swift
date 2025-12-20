@@ -35,7 +35,7 @@ struct RoutineTemplateLibraryView: View {
     // MARK: - Computed Properties
     
     private var today: Date {
-        Calendar.current.startOfDay(for: Date())
+        Calendar.current.startOfDay(for: Date.now)
     }
     
     /// 今天的所有状态
