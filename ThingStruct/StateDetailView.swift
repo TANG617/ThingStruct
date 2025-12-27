@@ -342,11 +342,12 @@ struct ChecklistItemRow: View {
                      * .onChange：监听值变化
                      *
                      * 用于检测用户清空输入后删除项
+                     * iOS 17新语法：使用两参数闭包 { oldValue, newValue in ... }
                      */
-                    .onChange(of: newTitle) { newValue in
+                    .onChange(of: newTitle) { oldValue, newValue in
                         let trimmed = newValue.trimmingCharacters(in: CharacterSet.whitespaces)
                         // 如果新值为空（但不是初始空状态）
-                        if trimmed.isEmpty && !newTitle.isEmpty {
+                        if trimmed.isEmpty && !oldValue.isEmpty {
                             // 延迟删除，给用户反悔的机会
                             Task { @MainActor in
                                 try? await Task.sleep(nanoseconds: 200_000_000) // 0.2秒

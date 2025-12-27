@@ -249,9 +249,9 @@ struct StateInputView: View {
                              *
                              * 当checklistItems[index]改变时触发
                              * 用于检测用户是否清空了输入框
+                             * iOS 17新语法：使用两参数闭包 { oldValue, newValue in ... }
                              */
-                            .onChange(of: checklistItems[index]) { newValue in
-                                let oldValue = checklistItems[index]
+                            .onChange(of: checklistItems[index]) { oldValue, newValue in
                                 /*
                                  * trimmingCharacters(in:)：去除首尾指定字符
                                  *
