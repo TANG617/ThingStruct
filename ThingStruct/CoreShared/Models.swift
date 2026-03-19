@@ -5,21 +5,44 @@ public struct LocalDay: Hashable, Codable, Comparable, Sendable {
     public let month: Int
     public let day: Int
 
-    public init(year: Int, month: Int, day: Int) {
+    public nonisolated init(year: Int, month: Int, day: Int) {
         self.year = year
         self.month = month
         self.day = day
     }
 
-    public static func < (lhs: LocalDay, rhs: LocalDay) -> Bool {
+    public nonisolated init(date: Date, calendar: Calendar = .current) {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard
+            let year = components.year,
+            let month = components.month,
+            let day = components.day
+        else {
+            preconditionFailure("Unable to decode LocalDay from date: \(date)")
+        }
+
+        self.init(year: year, month: month, day: day)
+    }
+
+    public nonisolated static func == (lhs: LocalDay, rhs: LocalDay) -> Bool {
+        lhs.year == rhs.year && lhs.month == rhs.month && lhs.day == rhs.day
+    }
+
+    public nonisolated func hash(into hasher: inout Hasher) {
+        hasher.combine(year)
+        hasher.combine(month)
+        hasher.combine(day)
+    }
+
+    public nonisolated static func < (lhs: LocalDay, rhs: LocalDay) -> Bool {
         (lhs.year, lhs.month, lhs.day) < (rhs.year, rhs.month, rhs.day)
     }
 
-    public var weekday: Weekday {
+    public nonisolated var weekday: Weekday {
         weekday(in: .thingStructGregorian)
     }
 
-    public func weekday(in calendar: Calendar) -> Weekday {
+    public nonisolated func weekday(in calendar: Calendar) -> Weekday {
         guard let date = calendar.date(from: DateComponents(year: year, month: month, day: day)) else {
             preconditionFailure("Invalid LocalDay: \(self)")
         }
@@ -27,7 +50,7 @@ public struct LocalDay: Hashable, Codable, Comparable, Sendable {
         return Weekday(rawValue: calendar.component(.weekday, from: date)) ?? .sunday
     }
 
-    public func adding(days: Int, calendar: Calendar = .thingStructGregorian) -> LocalDay {
+    public nonisolated func adding(days: Int, calendar: Calendar = .thingStructGregorian) -> LocalDay {
         guard
             let startDate = calendar.date(from: DateComponents(year: year, month: month, day: day)),
             let adjustedDate = calendar.date(byAdding: .day, value: days, to: startDate)
@@ -42,23 +65,27 @@ public struct LocalDay: Hashable, Codable, Comparable, Sendable {
 
         return LocalDay(year: year, month: month, day: day)
     }
+
+    public nonisolated static func today(calendar: Calendar = .current) -> LocalDay {
+        LocalDay(date: Date.now, calendar: calendar)
+    }
 }
 
 extension LocalDay: CustomStringConvertible {
-    public var description: String {
+    public nonisolated var description: String {
         String(format: "%04d-%02d-%02d", year, month, day)
     }
 }
 
 public extension Calendar {
-    static var thingStructGregorian: Calendar {
+    nonisolated static var thingStructGregorian: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
         return calendar
     }
 }
 
-public enum Weekday: Int, Codable, CaseIterable, Hashable, Sendable {
+public enum Weekday: Int, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case sunday = 1
     case monday = 2
     case tuesday = 3
@@ -66,11 +93,76 @@ public enum Weekday: Int, Codable, CaseIterable, Hashable, Sendable {
     case thursday = 5
     case friday = 6
     case saturday = 7
+
+    public var id: Int { rawValue }
+
+    public var shortName: String {
+        switch self {
+        case .sunday: return "Sun"
+        case .monday: return "Mon"
+        case .tuesday: return "Tue"
+        case .wednesday: return "Wed"
+        case .thursday: return "Thu"
+        case .friday: return "Fri"
+        case .saturday: return "Sat"
+        }
+    }
+
+    public var fullName: String {
+        switch self {
+        case .sunday: return "Sunday"
+        case .monday: return "Monday"
+        case .tuesday: return "Tuesday"
+        case .wednesday: return "Wednesday"
+        case .thursday: return "Thursday"
+        case .friday: return "Friday"
+        case .saturday: return "Saturday"
+        }
+    }
+
+    public var chineseName: String {
+        switch self {
+        case .sunday: return "周日"
+        case .monday: return "周一"
+        case .tuesday: return "周二"
+        case .wednesday: return "周三"
+        case .thursday: return "周四"
+        case .friday: return "周五"
+        case .saturday: return "周六"
+        }
+    }
+
+    public nonisolated static func from(date: Date, calendar: Calendar = .current) -> Weekday {
+        Weekday(rawValue: calendar.component(.weekday, from: date)) ?? .sunday
+    }
+
+    public nonisolated static var today: Weekday {
+        from(date: Date.now)
+    }
+
+    public nonisolated static var mondayFirst: [Weekday] {
+        [.monday, .tuesday, .wednesday, .thursday, .friday, .saturday, .sunday]
+    }
+}
+
+public extension Set where Element == Weekday {
+    var toIntArray: [Int] {
+        map(\.rawValue).sorted()
+    }
+
+    static func from(intArray: [Int]) -> Set<Weekday> {
+        Set(intArray.compactMap(Weekday.init(rawValue:)))
+    }
 }
 
 public enum ReminderTriggerMode: String, Codable, Hashable, Sendable {
     case atStart
     case beforeStart
+}
+
+public enum TimeBlockKind: String, Equatable, Codable, Sendable {
+    case userDefined
+    case blankBase
 }
 
 public struct ReminderRule: Identifiable, Equatable, Codable, Sendable {
@@ -137,6 +229,7 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
     public var dayPlanID: UUID?
     public var parentBlockID: UUID?
     public var layerIndex: Int
+    public var kind: TimeBlockKind
     public var title: String
     public var note: String?
     public var reminders: [ReminderRule]
@@ -151,6 +244,7 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
         dayPlanID: UUID? = nil,
         parentBlockID: UUID? = nil,
         layerIndex: Int,
+        kind: TimeBlockKind = .userDefined,
         title: String,
         note: String? = nil,
         reminders: [ReminderRule] = [],
@@ -164,6 +258,7 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
         self.dayPlanID = dayPlanID
         self.parentBlockID = parentBlockID
         self.layerIndex = layerIndex
+        self.kind = kind
         self.title = title
         self.note = note
         self.reminders = reminders
@@ -176,24 +271,45 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
 }
 
 public extension TimeBlock {
-    var hasIncompleteTasks: Bool {
+    nonisolated var hasIncompleteTasks: Bool {
         tasks.contains { !$0.isCompleted }
+    }
+
+    nonisolated var isBlankBaseBlock: Bool {
+        kind == .blankBase
     }
 }
 
 public struct DayPlan: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var date: LocalDay
+    public var sourceSavedTemplateID: UUID?
+    public var lastGeneratedAt: Date?
+    public var hasUserEdits: Bool
     public var blocks: [TimeBlock]
 
     public init(
         id: UUID = UUID(),
         date: LocalDay,
+        sourceSavedTemplateID: UUID? = nil,
+        lastGeneratedAt: Date? = nil,
+        hasUserEdits: Bool = false,
         blocks: [TimeBlock] = []
     ) {
         self.id = id
         self.date = date
+        self.sourceSavedTemplateID = sourceSavedTemplateID
+        self.lastGeneratedAt = lastGeneratedAt
+        self.hasUserEdits = hasUserEdits
         self.blocks = blocks
+    }
+}
+
+public extension DayPlan {
+    var containsCompletedTasks: Bool {
+        blocks.contains { block in
+            block.tasks.contains { $0.isCompleted }
+        }
     }
 }
 

@@ -2,6 +2,9 @@
  * RoutineItem.swift
  * 例程数据模型
  *
+ * 该文件只保留给旧 SwiftData 存储迁移使用。
+ * 当前 app 的业务真相来源已经迁移到 ThingStruct/CoreShared。
+ *
  * Routine 是一天的全部状态集合
  * 层级结构：Routine -> State -> Checklist/Remarks
  */

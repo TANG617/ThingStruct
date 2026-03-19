@@ -2,6 +2,9 @@
  * ChecklistItem.swift
  * 清单项数据模型
  *
+ * 该文件只保留给旧 SwiftData 存储迁移使用。
+ * 当前 app 的业务真相来源已经迁移到 ThingStruct/CoreShared。
+ *
  * 这是最简单的数据模型，适合作为Swift和SwiftData入门学习
  */
 

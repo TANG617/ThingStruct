@@ -6,6 +6,147 @@ public enum DayPlanEngine {
     }
 
     public static func resolved(_ plan: DayPlan) throws -> DayPlan {
+        let persistedPlan = strippedRuntimeBlocks(from: plan)
+        let resolvedRanges = try resolveRanges(in: persistedPlan)
+
+        var resolvedPlan = persistedPlan
+        resolvedPlan.blocks = persistedPlan.blocks.map { block in
+            var updatedBlock = block
+            if let range = resolvedRanges[block.id] {
+                updatedBlock.resolvedStartMinuteOfDay = range.start
+                updatedBlock.resolvedEndMinuteOfDay = range.end
+            } else {
+                updatedBlock.resolvedStartMinuteOfDay = nil
+                updatedBlock.resolvedEndMinuteOfDay = nil
+            }
+            return updatedBlock
+        }
+
+        return resolvedPlan
+    }
+
+    public static func runtimeResolved(_ plan: DayPlan) throws -> DayPlan {
+        let resolvedPlan = try resolved(plan)
+        var runtimePlan = resolvedPlan
+        runtimePlan.blocks.append(contentsOf: makeBlankBaseBlocks(in: resolvedPlan))
+        return runtimePlan
+    }
+
+    public static func cancelBlock(_ blockID: UUID, in plan: DayPlan) throws -> DayPlan {
+        let resolvedPlan = try resolved(plan)
+        guard let target = resolvedPlan.blocks.first(where: { $0.id == blockID }) else {
+            throw ThingStructCoreError.missingBlock(blockID)
+        }
+
+        if target.isCancelled {
+            return resolvedPlan
+        }
+
+        let activeBlocks = resolvedPlan.blocks.filter { !$0.isCancelled }
+        let activeBlocksByID = Dictionary(uniqueKeysWithValues: activeBlocks.map { ($0.id, $0) })
+        let childrenByParent = buildChildrenMap(from: activeBlocks)
+        let directChildren = Set(childrenByParent[blockID] ?? [])
+        let descendantIDs = collectDescendants(startingAt: blockID, childrenByParent: childrenByParent)
+        let originalRanges = try resolvedRangeMap(from: activeBlocks)
+
+        var updatedPlan = resolvedPlan
+
+        for index in updatedPlan.blocks.indices {
+            let currentID = updatedPlan.blocks[index].id
+
+            if currentID == blockID {
+                updatedPlan.blocks[index].isCancelled = true
+                updatedPlan.blocks[index].resolvedStartMinuteOfDay = nil
+                updatedPlan.blocks[index].resolvedEndMinuteOfDay = nil
+                continue
+            }
+
+            if directChildren.contains(currentID) {
+                guard let resolvedChild = activeBlocksByID[currentID] else {
+                    throw ThingStructCoreError.missingBlock(currentID)
+                }
+
+                guard
+                    let resolvedStart = resolvedChild.resolvedStartMinuteOfDay,
+                    let resolvedEnd = resolvedChild.resolvedEndMinuteOfDay
+                else {
+                    throw ThingStructCoreError.invalidResolvedRange(blockID: currentID, start: -1, end: -1)
+                }
+
+                updatedPlan.blocks[index].parentBlockID = target.parentBlockID
+                updatedPlan.blocks[index].layerIndex -= 1
+                updatedPlan.blocks[index].timing = .absolute(
+                    startMinuteOfDay: resolvedStart,
+                    requestedEndMinuteOfDay: resolvedEnd
+                )
+                updatedPlan.blocks[index].resolvedStartMinuteOfDay = nil
+                updatedPlan.blocks[index].resolvedEndMinuteOfDay = nil
+                continue
+            }
+
+            if descendantIDs.contains(currentID) {
+                updatedPlan.blocks[index].layerIndex -= 1
+                updatedPlan.blocks[index].resolvedStartMinuteOfDay = nil
+                updatedPlan.blocks[index].resolvedEndMinuteOfDay = nil
+            }
+        }
+
+        try validateCancelOverlapRisk(in: updatedPlan, originalRanges: originalRanges)
+
+        let reparsedPlan = try resolved(updatedPlan)
+        try validatePreservedRanges(after: reparsedPlan, against: originalRanges, excluding: [blockID])
+        return reparsedPlan
+    }
+
+    public static func activeSelection(in plan: DayPlan, at minuteOfDay: Int) throws -> ActiveSelection {
+        let runtimePlan = try runtimeResolved(plan)
+        let activeBlocks = runtimePlan.blocks
+            .filter { !$0.isCancelled }
+            .filter { block in
+                guard
+                    let start = block.resolvedStartMinuteOfDay,
+                    let end = block.resolvedEndMinuteOfDay
+                else {
+                    return false
+                }
+
+                return start <= minuteOfDay && minuteOfDay < end
+            }
+            .sorted { lhs, rhs in
+                if lhs.layerIndex != rhs.layerIndex {
+                    return lhs.layerIndex < rhs.layerIndex
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+
+        if activeBlocks.isEmpty {
+            return ActiveSelection(chain: [], taskSourceBlock: nil)
+        }
+
+        guard activeBlocks.first?.layerIndex == 0 else {
+            throw ThingStructCoreError.activeBlocksDoNotFormUniqueChain(atMinuteOfDay: minuteOfDay)
+        }
+
+        for index in activeBlocks.indices.dropFirst() {
+            let child = activeBlocks[index]
+            let parent = activeBlocks[index - 1]
+
+            if child.parentBlockID != parent.id || child.layerIndex != parent.layerIndex + 1 {
+                throw ThingStructCoreError.activeBlocksDoNotFormUniqueChain(atMinuteOfDay: minuteOfDay)
+            }
+        }
+
+        let taskSource = activeBlocks.reversed().first { $0.hasIncompleteTasks }
+        return ActiveSelection(chain: activeBlocks, taskSourceBlock: taskSource)
+    }
+
+    private static func strippedRuntimeBlocks(from plan: DayPlan) -> DayPlan {
+        var sanitized = plan
+        sanitized.blocks = plan.blocks.filter { !$0.isBlankBaseBlock }
+        return sanitized
+    }
+
+    private static func resolveRanges(in plan: DayPlan) throws -> [UUID: (start: Int, end: Int)] {
         var allBlocksByID: [UUID: TimeBlock] = [:]
 
         for block in plan.blocks {
@@ -62,123 +203,7 @@ public enum DayPlanEngine {
             resolvedRanges: &resolvedRanges
         )
 
-        var resolvedPlan = plan
-        resolvedPlan.blocks = plan.blocks.map { block in
-            var updatedBlock = block
-            if let range = resolvedRanges[block.id] {
-                updatedBlock.resolvedStartMinuteOfDay = range.start
-                updatedBlock.resolvedEndMinuteOfDay = range.end
-            } else {
-                updatedBlock.resolvedStartMinuteOfDay = nil
-                updatedBlock.resolvedEndMinuteOfDay = nil
-            }
-            return updatedBlock
-        }
-
-        return resolvedPlan
-    }
-
-    public static func cancelBlock(_ blockID: UUID, in plan: DayPlan) throws -> DayPlan {
-        let resolvedPlan = try resolved(plan)
-        guard let target = resolvedPlan.blocks.first(where: { $0.id == blockID }) else {
-            throw ThingStructCoreError.missingBlock(blockID)
-        }
-
-        if target.isCancelled {
-            return resolvedPlan
-        }
-
-        let activeBlocks = resolvedPlan.blocks.filter { !$0.isCancelled }
-        let activeBlocksByID = Dictionary(uniqueKeysWithValues: activeBlocks.map { ($0.id, $0) })
-        let childrenByParent = buildChildrenMap(from: activeBlocks)
-        let directChildren = childrenByParent[blockID] ?? []
-        let descendantIDs = collectDescendants(startingAt: blockID, childrenByParent: childrenByParent)
-
-        var updatedPlan = resolvedPlan
-
-        for index in updatedPlan.blocks.indices {
-            let currentID = updatedPlan.blocks[index].id
-
-            if currentID == blockID {
-                updatedPlan.blocks[index].isCancelled = true
-                updatedPlan.blocks[index].resolvedStartMinuteOfDay = nil
-                updatedPlan.blocks[index].resolvedEndMinuteOfDay = nil
-                continue
-            }
-
-            if directChildren.contains(currentID) {
-                guard let resolvedChild = activeBlocksByID[currentID] else {
-                    throw ThingStructCoreError.missingBlock(currentID)
-                }
-
-                guard
-                    let resolvedStart = resolvedChild.resolvedStartMinuteOfDay,
-                    let resolvedEnd = resolvedChild.resolvedEndMinuteOfDay
-                else {
-                    throw ThingStructCoreError.invalidResolvedRange(blockID: currentID, start: -1, end: -1)
-                }
-
-                updatedPlan.blocks[index].parentBlockID = target.parentBlockID
-                updatedPlan.blocks[index].layerIndex -= 1
-                updatedPlan.blocks[index].timing = .absolute(
-                    startMinuteOfDay: resolvedStart,
-                    requestedEndMinuteOfDay: resolvedEnd
-                )
-                updatedPlan.blocks[index].resolvedStartMinuteOfDay = nil
-                updatedPlan.blocks[index].resolvedEndMinuteOfDay = nil
-                continue
-            }
-
-            if descendantIDs.contains(currentID) {
-                updatedPlan.blocks[index].layerIndex -= 1
-                updatedPlan.blocks[index].resolvedStartMinuteOfDay = nil
-                updatedPlan.blocks[index].resolvedEndMinuteOfDay = nil
-            }
-        }
-
-        return try resolved(updatedPlan)
-    }
-
-    public static func activeSelection(in plan: DayPlan, at minuteOfDay: Int) throws -> ActiveSelection {
-        let resolvedPlan = try resolved(plan)
-        let activeBlocks = resolvedPlan.blocks
-            .filter { !$0.isCancelled }
-            .filter { block in
-                guard
-                    let start = block.resolvedStartMinuteOfDay,
-                    let end = block.resolvedEndMinuteOfDay
-                else {
-                    return false
-                }
-
-                return start <= minuteOfDay && minuteOfDay < end
-            }
-            .sorted { lhs, rhs in
-                if lhs.layerIndex != rhs.layerIndex {
-                    return lhs.layerIndex < rhs.layerIndex
-                }
-                return lhs.id.uuidString < rhs.id.uuidString
-            }
-
-        if activeBlocks.isEmpty {
-            return ActiveSelection(chain: [], taskSourceBlock: nil)
-        }
-
-        guard activeBlocks.first?.layerIndex == 0 else {
-            throw ThingStructCoreError.activeBlocksDoNotFormUniqueChain(atMinuteOfDay: minuteOfDay)
-        }
-
-        for index in activeBlocks.indices.dropFirst() {
-            let child = activeBlocks[index]
-            let parent = activeBlocks[index - 1]
-
-            if child.parentBlockID != parent.id || child.layerIndex != parent.layerIndex + 1 {
-                throw ThingStructCoreError.activeBlocksDoNotFormUniqueChain(atMinuteOfDay: minuteOfDay)
-            }
-        }
-
-        let taskSource = activeBlocks.reversed().first { $0.hasIncompleteTasks }
-        return ActiveSelection(chain: activeBlocks, taskSourceBlock: taskSource)
+        return resolvedRanges
     }
 
     private static func detectCycles(
@@ -333,6 +358,149 @@ public enum DayPlanEngine {
         }
     }
 
+    private static func makeBlankBaseBlocks(in plan: DayPlan) -> [TimeBlock] {
+        let resolvedBaseBlocks = plan.blocks
+            .filter { !$0.isCancelled && $0.layerIndex == 0 }
+            .sorted { lhs, rhs in
+                let lhsStart = lhs.resolvedStartMinuteOfDay ?? 0
+                let rhsStart = rhs.resolvedStartMinuteOfDay ?? 0
+                if lhsStart != rhsStart {
+                    return lhsStart < rhsStart
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+
+        if resolvedBaseBlocks.isEmpty {
+            return [blankBaseBlock(in: plan, start: 0, end: 24 * 60)]
+        }
+
+        var blanks: [TimeBlock] = []
+        var cursor = 0
+
+        for block in resolvedBaseBlocks {
+            guard
+                let start = block.resolvedStartMinuteOfDay,
+                let end = block.resolvedEndMinuteOfDay
+            else {
+                continue
+            }
+
+            if cursor < start {
+                blanks.append(blankBaseBlock(in: plan, start: cursor, end: start))
+            }
+
+            cursor = max(cursor, end)
+        }
+
+        if cursor < 24 * 60 {
+            blanks.append(blankBaseBlock(in: plan, start: cursor, end: 24 * 60))
+        }
+
+        return blanks
+    }
+
+    private static func blankBaseBlock(in plan: DayPlan, start: Int, end: Int) -> TimeBlock {
+        TimeBlock(
+            dayPlanID: plan.id,
+            layerIndex: 0,
+            kind: .blankBase,
+            title: "Blank",
+            reminders: [],
+            tasks: [],
+            timing: .absolute(startMinuteOfDay: start, requestedEndMinuteOfDay: end),
+            resolvedStartMinuteOfDay: start,
+            resolvedEndMinuteOfDay: end
+        )
+    }
+
+    private static func resolvedRangeMap(from blocks: [TimeBlock]) throws -> [UUID: (start: Int, end: Int)] {
+        var ranges: [UUID: (start: Int, end: Int)] = [:]
+
+        for block in blocks where !block.isCancelled {
+            guard
+                let start = block.resolvedStartMinuteOfDay,
+                let end = block.resolvedEndMinuteOfDay
+            else {
+                throw ThingStructCoreError.invalidResolvedRange(blockID: block.id, start: -1, end: -1)
+            }
+
+            ranges[block.id] = (start, end)
+        }
+
+        return ranges
+    }
+
+    private static func validateCancelOverlapRisk(
+        in plan: DayPlan,
+        originalRanges: [UUID: (start: Int, end: Int)]
+    ) throws {
+        let survivingBlocks = plan.blocks.filter { !$0.isCancelled }
+        let groupedBlocks = Dictionary(grouping: survivingBlocks) { block in
+            ParentLayerKey(parentID: block.parentBlockID, layerIndex: block.layerIndex)
+        }
+
+        for (_, blocks) in groupedBlocks {
+            let sortedBlocks = try blocks.sorted { lhs, rhs in
+                guard let lhsRange = originalRanges[lhs.id], let rhsRange = originalRanges[rhs.id] else {
+                    throw ThingStructCoreError.missingBlock(lhs.id == rhs.id ? lhs.id : rhs.id)
+                }
+
+                if lhsRange.start != rhsRange.start {
+                    return lhsRange.start < rhsRange.start
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+
+            for index in sortedBlocks.indices.dropFirst() {
+                let previous = sortedBlocks[index - 1]
+                let current = sortedBlocks[index]
+
+                guard
+                    let previousRange = originalRanges[previous.id],
+                    let currentRange = originalRanges[current.id]
+                else {
+                    throw ThingStructCoreError.missingBlock(previous.id)
+                }
+
+                if currentRange.start < previousRange.end {
+                    throw ThingStructCoreError.cancelIntroducesSiblingOverlap(
+                        firstBlockID: previous.id,
+                        secondBlockID: current.id
+                    )
+                }
+            }
+        }
+    }
+
+    private static func validatePreservedRanges(
+        after plan: DayPlan,
+        against originalRanges: [UUID: (start: Int, end: Int)],
+        excluding excludedIDs: Set<UUID>
+    ) throws {
+        for block in plan.blocks where !block.isCancelled && !excludedIDs.contains(block.id) {
+            guard let expectedRange = originalRanges[block.id] else {
+                continue
+            }
+
+            guard
+                let actualStart = block.resolvedStartMinuteOfDay,
+                let actualEnd = block.resolvedEndMinuteOfDay
+            else {
+                throw ThingStructCoreError.invalidResolvedRange(blockID: block.id, start: -1, end: -1)
+            }
+
+            if actualStart != expectedRange.start || actualEnd != expectedRange.end {
+                throw ThingStructCoreError.cancelChangesResolvedRange(
+                    blockID: block.id,
+                    expectedStart: expectedRange.start,
+                    expectedEnd: expectedRange.end,
+                    actualStart: actualStart,
+                    actualEnd: actualEnd
+                )
+            }
+        }
+    }
+
     private static func buildChildrenMap(from blocks: [TimeBlock]) -> [UUID: [UUID]] {
         var childrenByParent: [UUID: [UUID]] = [:]
 
@@ -366,6 +534,11 @@ private struct ResolvedSibling {
     let block: TimeBlock
     let start: Int
     let requestedEnd: Int?
+}
+
+private struct ParentLayerKey: Hashable {
+    let parentID: UUID?
+    let layerIndex: Int
 }
 
 private extension Array {

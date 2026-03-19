@@ -2,6 +2,9 @@
  * StateTemplate.swift
  * 状态模板数据模型
  *
+ * 该文件只保留给旧 SwiftData 存储迁移使用。
+ * 当前 app 的业务真相来源已经迁移到 ThingStruct/CoreShared。
+ *
  * 模板是可复用的状态蓝图，用户可以从模板快速创建新的状态
  * 这个文件展示了工厂方法模式和 SwiftData 的数据操作
  */

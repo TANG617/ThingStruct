@@ -2,6 +2,9 @@
  * RoutineTemplate.swift
  * 例程模板数据模型
  *
+ * 该文件只保留给旧 SwiftData 存储迁移使用。
+ * 当前 app 的业务真相来源已经迁移到 ThingStruct/CoreShared。
+ *
  * 例程模板是可复用的蓝图，用户可以从模板快速创建一天的例程
  * 层级结构：RoutineTemplate -> StateTemplate -> ChecklistItem（作为模板）
  */

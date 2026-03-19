@@ -2,6 +2,9 @@
  * StateItem.swift
  * 状态（任务）数据模型
  *
+ * 该文件只保留给旧 SwiftData 存储迁移使用。
+ * 当前 app 的业务真相来源已经迁移到 ThingStruct/CoreShared。
+ *
  * 这是应用的核心数据模型，代表一个待办状态/任务
  * 包含了更多Swift特性：计算属性、关系映射、闭包等
  *

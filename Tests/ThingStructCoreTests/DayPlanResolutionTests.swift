@@ -79,4 +79,40 @@ final class DayPlanResolutionTests: XCTestCase {
             )
         }
     }
+
+    func testRuntimeResolutionFillsBaseGapsWithBlankBlocks() throws {
+        let morning = baseBlock(title: "Morning", start: 60, requestedEnd: 120)
+        let evening = baseBlock(title: "Evening", start: 180, requestedEnd: 240)
+
+        let runtimePlan = try DayPlanEngine.runtimeResolved(makePlan(blocks: [morning, evening]))
+        let blankRanges = runtimePlan.blocks
+            .filter(\.isBlankBaseBlock)
+            .compactMap { block -> (Int, Int)? in
+                guard
+                    let start = block.resolvedStartMinuteOfDay,
+                    let end = block.resolvedEndMinuteOfDay
+                else {
+                    return nil
+                }
+
+                return (start, end)
+            }
+
+        XCTAssertEqual(blankRanges.count, 3)
+        XCTAssertEqual(blankRanges.map(\.0), [0, 120, 240])
+        XCTAssertEqual(blankRanges.map(\.1), [60, 180, 1440])
+    }
+
+    func testResolvedIgnoresStaleCachedResolvedMinutes() throws {
+        var staleMorning = baseBlock(title: "Morning", start: 360)
+        staleMorning.resolvedStartMinuteOfDay = 999
+        staleMorning.resolvedEndMinuteOfDay = 1000
+
+        let afternoon = baseBlock(title: "Afternoon", start: 780)
+        let resolved = try DayPlanEngine.resolved(makePlan(blocks: [staleMorning, afternoon]))
+
+        let refreshedMorning = try XCTUnwrap(resolved.blocks.first(where: { $0.id == staleMorning.id }))
+        XCTAssertEqual(refreshedMorning.resolvedStartMinuteOfDay, 360)
+        XCTAssertEqual(refreshedMorning.resolvedEndMinuteOfDay, 780)
+    }
 }

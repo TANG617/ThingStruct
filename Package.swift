@@ -16,7 +16,7 @@ let package = Package(
     targets: [
         .target(
             name: "ThingStructCore",
-            path: "ThingStructCore"
+            path: "ThingStruct/CoreShared"
         ),
         .testTarget(
             name: "ThingStructCoreTests",

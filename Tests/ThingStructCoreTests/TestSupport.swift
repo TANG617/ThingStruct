@@ -78,3 +78,21 @@ func overlayRelative(
         )
     )
 }
+
+func templateBlock(
+    id: UUID = UUID(),
+    parentID: UUID? = nil,
+    layerIndex: Int = 0,
+    title: String,
+    tasks: [TaskBlueprint] = [],
+    timing: TimeBlockTiming
+) -> BlockTemplate {
+    BlockTemplate(
+        id: id,
+        parentTemplateBlockID: parentID,
+        layerIndex: layerIndex,
+        title: title,
+        taskBlueprints: tasks,
+        timing: timing
+    )
+}
