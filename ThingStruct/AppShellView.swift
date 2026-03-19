@@ -40,3 +40,28 @@ struct AppShellView: View {
         }
     }
 }
+
+#Preview("App Shell - Now") {
+    AppShellView()
+        .environment(PreviewSupport.store(tab: .now))
+}
+
+#Preview("App Shell - Today") {
+    AppShellView()
+        .environment(PreviewSupport.store(tab: .today))
+}
+
+#Preview("App Shell - Templates") {
+    AppShellView()
+        .environment(PreviewSupport.store(tab: .templates))
+}
+
+#Preview("App Shell - Error Alert") {
+    AppShellView()
+        .environment(
+            PreviewSupport.store(
+                tab: .now,
+                lastErrorMessage: "This is a preview alert message."
+            )
+        )
+}

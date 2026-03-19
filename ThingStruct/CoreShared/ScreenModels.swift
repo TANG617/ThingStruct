@@ -8,16 +8,36 @@ public struct NowChainItem: Identifiable, Equatable, Sendable {
     public var endMinuteOfDay: Int
     public var isBlank: Bool
     public var hasIncompleteTasks: Bool
+    public var isCurrent: Bool
+}
+
+public struct NowNoteSection: Identifiable, Equatable, Sendable {
+    public var id: UUID
+    public var title: String
+    public var layerIndex: Int
+    public var note: String
+    public var isBlank: Bool
+    public var isCurrent: Bool
+}
+
+public struct NowTaskSection: Identifiable, Equatable, Sendable {
+    public var id: UUID
+    public var title: String
+    public var layerIndex: Int
+    public var startMinuteOfDay: Int
+    public var endMinuteOfDay: Int
+    public var tasks: [TaskItem]
+    public var isCurrent: Bool
+    public var isComplete: Bool
 }
 
 public struct NowScreenModel: Equatable, Sendable {
     public var date: LocalDay
     public var minuteOfDay: Int
     public var activeChain: [NowChainItem]
-    public var activeBlockTitle: String
+    public var noteSections: [NowNoteSection]
     public var statusMessage: String?
-    public var tasks: [TaskItem]
-    public var taskSourceBlockID: UUID?
+    public var taskSections: [NowTaskSection]
 }
 
 public struct TimelineBlockItem: Identifiable, Equatable, Sendable {
@@ -49,6 +69,7 @@ public struct TodayScreenModel: Equatable, Sendable {
     public var blocks: [TimelineBlockItem]
     public var selectedBlock: BlockDetailModel?
     public var initialScrollMinute: Int
+    public var initialFocusBlockID: UUID?
 }
 
 public struct SuggestedTemplateSummary: Identifiable, Equatable, Sendable {
@@ -93,46 +114,39 @@ public enum ThingStructPresentation {
     ) throws -> NowScreenModel {
         let plan = document.dayPlan(for: date) ?? DayPlan(date: date)
         let selection = try DayPlanEngine.activeSelection(in: plan, at: minuteOfDay)
+        let sortedChain = selection.chain.sorted(by: nowChainSort)
 
-        let activeChain = selection.chain.compactMap { block -> NowChainItem? in
-            guard
-                let start = block.resolvedStartMinuteOfDay,
-                let end = block.resolvedEndMinuteOfDay
-            else {
-                return nil
-            }
+        let activeChain = makeNowChainItems(
+            from: sortedChain,
+            activeBlockID: selection.activeBlock?.id
+        )
+        let noteSections = makeNowNoteSections(
+            from: sortedChain,
+            activeBlockID: selection.activeBlock?.id
+        )
+        let taskSections = makeNowTaskSections(
+            from: sortedChain,
+            activeBlockID: selection.activeBlock?.id
+        )
 
-            return NowChainItem(
-                id: block.id,
-                title: block.title,
-                layerIndex: block.layerIndex,
-                startMinuteOfDay: start,
-                endMinuteOfDay: end,
-                isBlank: block.isBlankBaseBlock,
-                hasIncompleteTasks: block.hasIncompleteTasks
-            )
-        }
-
-        let activeBlockTitle = selection.activeBlock?.title ?? "No Active Block"
         let statusMessage: String?
-        if selection.taskSourceBlock != nil {
+        if !taskSections.isEmpty {
             statusMessage = nil
         } else if selection.activeBlock?.isBlankBaseBlock == true {
-            statusMessage = "当前为空白时段"
+            statusMessage = "You're in open time right now."
         } else if selection.activeBlock != nil {
-            statusMessage = "当前链条没有未完成任务"
+            statusMessage = "No incomplete tasks in this chain."
         } else {
-            statusMessage = "今天还没有计划"
+            statusMessage = "No plan for today yet."
         }
 
         return NowScreenModel(
             date: date,
             minuteOfDay: minuteOfDay,
             activeChain: activeChain,
-            activeBlockTitle: activeBlockTitle,
+            noteSections: noteSections,
             statusMessage: statusMessage,
-            tasks: selection.taskSourceBlock?.tasks.sorted(by: taskSort) ?? [],
-            taskSourceBlockID: selection.taskSourceBlock?.id
+            taskSections: taskSections
         )
     }
 
@@ -140,7 +154,7 @@ public enum ThingStructPresentation {
         document: ThingStructDocument,
         date: LocalDay,
         selectedBlockID: UUID?,
-        initialMinute: Int?
+        currentMinute: Int?
     ) throws -> TodayScreenModel {
         let runtimePlan = try DayPlanEngine.runtimeResolved(document.dayPlan(for: date) ?? DayPlan(date: date))
         let sortedBlocks = runtimePlan.blocks
@@ -167,17 +181,32 @@ public enum ThingStructPresentation {
             }
             .sorted(by: timelineSort)
 
+        let focusedBlockID: UUID?
+        if let selectedBlockID {
+            focusedBlockID = selectedBlockID
+        } else if let currentMinute {
+            focusedBlockID = try DayPlanEngine.activeSelection(
+                in: document.dayPlan(for: date) ?? DayPlan(date: date),
+                at: currentMinute
+            ).activeBlock?.id
+        } else {
+            focusedBlockID = sortedBlocks.first(where: { !$0.isBlank })?.id
+        }
+
         let selectedBlock = runtimePlan.blocks
-            .first(where: { $0.id == selectedBlockID && !$0.isCancelled })
+            .first(where: { $0.id == focusedBlockID && !$0.isCancelled })
             .flatMap(detailModel)
 
-        let fallbackMinute = sortedBlocks.first(where: { !$0.isBlank })?.startMinuteOfDay ?? 0
+        let fallbackMinute = sortedBlocks.first(where: { $0.id == focusedBlockID })?.startMinuteOfDay
+            ?? sortedBlocks.first(where: { !$0.isBlank })?.startMinuteOfDay
+            ?? 0
 
         return TodayScreenModel(
             date: date,
             blocks: sortedBlocks,
             selectedBlock: selectedBlock,
-            initialScrollMinute: initialMinute ?? fallbackMinute
+            initialScrollMinute: fallbackMinute,
+            initialFocusBlockID: focusedBlockID
         )
     }
 
@@ -267,10 +296,108 @@ public enum ThingStructPresentation {
     }
 }
 
+private nonisolated func makeNowChainItems(
+    from chain: [TimeBlock],
+    activeBlockID: UUID?
+) -> [NowChainItem] {
+    chain.compactMap { block in
+        guard
+            let start = block.resolvedStartMinuteOfDay,
+            let end = block.resolvedEndMinuteOfDay
+        else {
+            return nil
+        }
+
+        return NowChainItem(
+            id: block.id,
+            title: block.title,
+            layerIndex: block.layerIndex,
+            startMinuteOfDay: start,
+            endMinuteOfDay: end,
+            isBlank: block.isBlankBaseBlock,
+            hasIncompleteTasks: block.hasIncompleteTasks,
+            isCurrent: block.id == activeBlockID
+        )
+    }
+}
+
+private nonisolated func makeNowNoteSections(
+    from chain: [TimeBlock],
+    activeBlockID: UUID?
+) -> [NowNoteSection] {
+    chain.compactMap { block in
+        guard let note = normalizedNoteText(block.note) else {
+            return nil
+        }
+
+        return NowNoteSection(
+            id: block.id,
+            title: block.title,
+            layerIndex: block.layerIndex,
+            note: note,
+            isBlank: block.isBlankBaseBlock,
+            isCurrent: block.id == activeBlockID
+        )
+    }
+}
+
+private nonisolated func makeNowTaskSections(
+    from chain: [TimeBlock],
+    activeBlockID: UUID?
+) -> [NowTaskSection] {
+    chain.filter { !$0.tasks.isEmpty }.compactMap { block in
+        makeNowTaskSection(from: block, activeBlockID: activeBlockID)
+    }
+}
+
+private nonisolated func makeNowTaskSection(
+    from block: TimeBlock,
+    activeBlockID: UUID?
+) -> NowTaskSection? {
+    guard
+        let start = block.resolvedStartMinuteOfDay,
+        let end = block.resolvedEndMinuteOfDay
+    else {
+        return nil
+    }
+
+    return NowTaskSection(
+        id: block.id,
+        title: block.title,
+        layerIndex: block.layerIndex,
+        startMinuteOfDay: start,
+        endMinuteOfDay: end,
+        tasks: block.tasks.sorted(by: taskSort),
+        isCurrent: block.id == activeBlockID,
+        isComplete: !block.hasIncompleteTasks
+    )
+}
+
+private nonisolated func normalizedNoteText(_ note: String?) -> String? {
+    guard let note else {
+        return nil
+    }
+
+    let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
 private nonisolated func taskSort(_ lhs: TaskItem, _ rhs: TaskItem) -> Bool {
     if lhs.order != rhs.order {
         return lhs.order < rhs.order
     }
+    return lhs.id.uuidString < rhs.id.uuidString
+}
+
+private nonisolated func nowChainSort(_ lhs: TimeBlock, _ rhs: TimeBlock) -> Bool {
+    if lhs.layerIndex != rhs.layerIndex {
+        return lhs.layerIndex > rhs.layerIndex
+    }
+
+    if lhs.resolvedStartMinuteOfDay != rhs.resolvedStartMinuteOfDay {
+        return (lhs.resolvedStartMinuteOfDay ?? 0) < (rhs.resolvedStartMinuteOfDay ?? 0)
+    }
+
     return lhs.id.uuidString < rhs.id.uuidString
 }
 

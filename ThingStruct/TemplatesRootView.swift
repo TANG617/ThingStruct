@@ -18,7 +18,11 @@ struct TemplatesRootView: View {
         NavigationStack {
             Group {
                 if !store.isLoaded {
-                    ContentUnavailableView("Loading", systemImage: "square.stack.3d.up")
+                    ScreenLoadingView(
+                        title: "Loading Templates",
+                        systemImage: "square.stack.3d.up",
+                        description: "Preparing suggested templates and tomorrow's schedule."
+                    )
                 } else {
                     let result = Result { try store.templatesScreenModel() }
 
@@ -46,11 +50,12 @@ struct TemplatesRootView: View {
                         .listStyle(.insetGrouped)
 
                     case let .failure(error):
-                        ContentUnavailableView(
-                            "Unable to Load Templates",
-                            systemImage: "exclamationmark.triangle",
-                            description: Text(error.localizedDescription)
-                        )
+                        RecoverableErrorView(
+                            title: "Unable to Load Templates",
+                            message: error.localizedDescription
+                        ) {
+                            store.reload()
+                        }
                     }
                 }
             }
@@ -100,10 +105,20 @@ struct TemplatesRootView: View {
                         Text(template.previewTitles.joined(separator: " · "))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
-                        HStack {
-                            Label("\(template.baseBlockCount) base", systemImage: "rectangle.stack")
-                            Label("\(template.totalBlockCount) total", systemImage: "square.stack.3d.up")
-                            Label("\(template.taskBlueprintCount) tasks", systemImage: "checklist")
+                            .lineLimit(2)
+
+                        ViewThatFits(in: .horizontal) {
+                            HStack {
+                                Label("\(template.baseBlockCount) base", systemImage: "rectangle.stack")
+                                Label("\(template.totalBlockCount) total", systemImage: "square.stack.3d.up")
+                                Label("\(template.taskBlueprintCount) tasks", systemImage: "checklist")
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label("\(template.baseBlockCount) base blocks", systemImage: "rectangle.stack")
+                                Label("\(template.totalBlockCount) total blocks", systemImage: "square.stack.3d.up")
+                                Label("\(template.taskBlueprintCount) task blueprints", systemImage: "checklist")
+                            }
                         }
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -150,18 +165,16 @@ struct TemplatesRootView: View {
                                 .foregroundStyle(.secondary)
                         }
 
-                        HStack {
-                            Button("Edit") {
-                                if let source = store.document.savedTemplates.first(where: { $0.id == template.id }) {
-                                    editingTemplate = source
-                                }
+                        ViewThatFits(in: .horizontal) {
+                            HStack {
+                                editTemplateButton(for: template)
+                                useTomorrowButton(for: template)
                             }
-                            .buttonStyle(.bordered)
 
-                            Button("Use for Tomorrow") {
-                                store.setTomorrowOverride(templateID: template.id)
+                            VStack(alignment: .leading, spacing: 10) {
+                                editTemplateButton(for: template)
+                                useTomorrowButton(for: template)
                             }
-                            .buttonStyle(.borderedProminent)
                         }
                     }
                     .padding(.vertical, 4)
@@ -173,22 +186,8 @@ struct TemplatesRootView: View {
     @ViewBuilder
     private func scheduleSection(model: TemplatesScreenModel) -> some View {
         Section("Tomorrow") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(model.tomorrowSchedule.date.titleText)
-                    .font(.headline)
-                Label(model.tomorrowSchedule.weekday.fullName, systemImage: "calendar")
-                    .foregroundStyle(.secondary)
-                scheduleRow("Weekday Rule", value: model.tomorrowSchedule.weekdayTemplateTitle ?? "None")
-                scheduleRow("Override", value: model.tomorrowSchedule.overrideTemplateTitle ?? "None")
-                scheduleRow("Final", value: model.tomorrowSchedule.finalTemplateTitle ?? "None")
-
-                Button {
-                    store.regenerateFutureDayPlan(for: model.tomorrowSchedule.date)
-                } label: {
-                    Label("Regenerate Tomorrow Plan", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.bordered)
-                .padding(.top, 6)
+            TomorrowScheduleCard(schedule: model.tomorrowSchedule) {
+                store.regenerateFutureDayPlan(for: model.tomorrowSchedule.date)
             }
         }
 
@@ -219,14 +218,20 @@ struct TemplatesRootView: View {
         }
     }
 
-    private func scheduleRow(_ title: String, value: String) -> some View {
-        HStack {
-            Text(title)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
+    private func editTemplateButton(for template: SavedTemplateSummary) -> some View {
+        Button("Edit") {
+            if let source = store.document.savedTemplates.first(where: { $0.id == template.id }) {
+                editingTemplate = source
+            }
         }
-        .font(.subheadline)
+        .buttonStyle(.bordered)
+    }
+
+    private func useTomorrowButton(for template: SavedTemplateSummary) -> some View {
+        Button("Use for Tomorrow") {
+            store.setTomorrowOverride(templateID: template.id)
+        }
+        .buttonStyle(.borderedProminent)
     }
 }
 
@@ -269,4 +274,103 @@ private struct SaveTemplateSheet: View {
         }
         .presentationDetents([.medium])
     }
+}
+
+private struct TomorrowScheduleCard: View {
+    let schedule: TomorrowScheduleSummary
+    let onRegenerate: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(schedule.date.titleText)
+                    .font(.headline)
+
+                Label(schedule.weekday.fullName, systemImage: "calendar")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text("Tomorrow Uses")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    if schedule.overrideTemplateTitle != nil {
+                        Text("Override Active")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.accentColor.opacity(0.14), in: Capsule())
+                    }
+                }
+
+                Text(schedule.finalTemplateTitle ?? "None")
+                    .font(.title3.weight(.semibold))
+            }
+
+            Divider()
+
+            LabeledContent("Weekday Rule", value: schedule.weekdayTemplateTitle ?? "None")
+            LabeledContent("Override", value: schedule.overrideTemplateTitle ?? "None")
+            LabeledContent("Final", value: schedule.finalTemplateTitle ?? "None")
+
+            Button {
+                onRegenerate()
+            } label: {
+                Label("Regenerate Tomorrow Plan", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+            .padding(.top, 2)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+#Preview("Templates Root") {
+    TemplatesRootView()
+        .environment(PreviewSupport.store(tab: .templates))
+}
+
+#Preview("Templates Root - Empty") {
+    TemplatesRootView()
+        .environment(
+            PreviewSupport.store(
+                tab: .templates,
+                document: ThingStructDocument()
+            )
+        )
+}
+
+#Preview("Templates Root - Loading") {
+    TemplatesRootView()
+        .environment(PreviewSupport.store(tab: .templates, loaded: false))
+}
+
+#Preview("Save Template Sheet") {
+    SaveTemplateSheet(sourceDate: PreviewSupport.referenceDay) { _ in }
+}
+
+#Preview("Tomorrow Schedule Card") {
+    TomorrowScheduleCard(schedule: PreviewSupport.templatesModel().tomorrowSchedule) {
+    }
+    .padding()
+}
+
+#Preview("Tomorrow Schedule Card - Override") {
+    TomorrowScheduleCard(
+        schedule: TomorrowScheduleSummary(
+            date: PreviewSupport.referenceDay.adding(days: 1),
+            weekday: PreviewSupport.referenceDay.adding(days: 1).weekday,
+            weekdayTemplateID: UUID(),
+            weekdayTemplateTitle: "Workday",
+            overrideTemplateID: UUID(),
+            overrideTemplateTitle: "Travel Day",
+            finalTemplateID: UUID(),
+            finalTemplateTitle: "Travel Day"
+        )
+    ) {
+    }
+    .padding()
 }

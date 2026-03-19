@@ -17,7 +17,7 @@ final class PresentationTests: XCTestCase {
             minuteOfDay: 600
         )
 
-        XCTAssertEqual(model.statusMessage, "当前为空白时段")
+        XCTAssertEqual(model.statusMessage, "You're in open time right now.")
         XCTAssertEqual(model.activeChain.count, 1)
         XCTAssertTrue(model.activeChain.first?.isBlank == true)
     }
@@ -32,11 +32,138 @@ final class PresentationTests: XCTestCase {
             document: document,
             date: LocalDay(year: 2026, month: 3, day: 19),
             selectedBlockID: nil,
-            initialMinute: nil
+            currentMinute: nil
         )
 
         XCTAssertTrue(model.blocks.contains(where: \.isBlank))
         XCTAssertTrue(model.blocks.contains(where: { !$0.isBlank && $0.title == "Morning" }))
+    }
+
+    func testNowScreenModelKeepsCompletedUpperTaskSectionVisible() throws {
+        let baseID = UUID()
+        let overlayID = UUID()
+        let plan = makePlan(blocks: [
+            baseBlock(
+                id: baseID,
+                title: "Morning",
+                start: 540,
+                requestedEnd: 720,
+                tasks: [task("Plan work")]
+            ),
+            overlayRelative(
+                id: overlayID,
+                parentID: baseID,
+                layerIndex: 1,
+                title: "Focus Sprint",
+                offset: 0,
+                duration: 120,
+                tasks: [task("Finish draft", completed: true)]
+            )
+        ])
+
+        let model = try ThingStructPresentation.nowScreenModel(
+            document: ThingStructDocument(dayPlans: [try DayPlanEngine.resolved(plan)]),
+            date: LocalDay(year: 2026, month: 3, day: 19),
+            minuteOfDay: 600
+        )
+
+        XCTAssertEqual(model.taskSections.map(\.id), [overlayID, baseID])
+        XCTAssertEqual(model.taskSections.map(\.title), ["Focus Sprint", "Morning"])
+        XCTAssertTrue(model.taskSections[0].isCurrent)
+        XCTAssertTrue(model.taskSections[0].isComplete)
+        XCTAssertFalse(model.taskSections[1].isCurrent)
+        XCTAssertFalse(model.taskSections[1].isComplete)
+    }
+
+    func testNowScreenModelGroupsNotesAndTasksByHighestLayerFirst() throws {
+        let baseID = UUID()
+        let overlayID = UUID()
+        let topID = UUID()
+        let plan = DayPlan(
+            date: LocalDay(year: 2026, month: 3, day: 19),
+            blocks: [
+                TimeBlock(
+                    id: baseID,
+                    layerIndex: 0,
+                    title: "Morning",
+                    note: "Base note",
+                    tasks: [task("Base task")],
+                    timing: .absolute(
+                        startMinuteOfDay: 540,
+                        requestedEndMinuteOfDay: 720
+                    )
+                ),
+                TimeBlock(
+                    id: overlayID,
+                    parentBlockID: baseID,
+                    layerIndex: 1,
+                    title: "Focus Sprint",
+                    note: "Overlay note",
+                    tasks: [task("Overlay task")],
+                    timing: .relative(
+                        startOffsetMinutes: 0,
+                        requestedDurationMinutes: 180
+                    )
+                ),
+                TimeBlock(
+                    id: topID,
+                    parentBlockID: overlayID,
+                    layerIndex: 2,
+                    title: "Launch Window",
+                    note: "Top note",
+                    tasks: [task("Top task", completed: true)],
+                    timing: .relative(
+                        startOffsetMinutes: 0,
+                        requestedDurationMinutes: 180
+                    )
+                )
+            ]
+        )
+
+        let model = try ThingStructPresentation.nowScreenModel(
+            document: ThingStructDocument(dayPlans: [try DayPlanEngine.resolved(plan)]),
+            date: LocalDay(year: 2026, month: 3, day: 19),
+            minuteOfDay: 600
+        )
+
+        XCTAssertEqual(model.noteSections.map(\.id), [topID, overlayID, baseID])
+        XCTAssertEqual(model.noteSections.map(\.note), ["Top note", "Overlay note", "Base note"])
+        XCTAssertEqual(model.taskSections.map(\.id), [topID, overlayID, baseID])
+        XCTAssertEqual(model.activeChain.map(\.layerIndex), [2, 1, 0])
+        XCTAssertTrue(model.noteSections[0].isCurrent)
+        XCTAssertTrue(model.taskSections[0].isCurrent)
+    }
+
+    func testTodayScreenModelFocusesCurrentActiveBlockWhenNothingSelected() throws {
+        let baseID = UUID()
+        let overlayID = UUID()
+        let plan = makePlan(blocks: [
+            baseBlock(
+                id: baseID,
+                title: "Morning",
+                start: 540,
+                requestedEnd: 720
+            ),
+            overlayRelative(
+                id: overlayID,
+                parentID: baseID,
+                layerIndex: 1,
+                title: "Focus Sprint",
+                offset: 30,
+                duration: 60
+            )
+        ])
+
+        let model = try ThingStructPresentation.todayScreenModel(
+            document: ThingStructDocument(dayPlans: [try DayPlanEngine.resolved(plan)]),
+            date: LocalDay(year: 2026, month: 3, day: 19),
+            selectedBlockID: nil,
+            currentMinute: 585
+        )
+
+        XCTAssertEqual(model.initialFocusBlockID, overlayID)
+        XCTAssertEqual(model.selectedBlock?.id, overlayID)
+        XCTAssertEqual(model.initialScrollMinute, 570)
     }
 
     func testTemplatesScreenModelUsesOverrideForTomorrowSummary() throws {

@@ -337,3 +337,38 @@ private struct MinutePickerRow: View {
         return (components.hour ?? 0) * 60 + (components.minute ?? 0)
     }
 }
+
+#Preview("Block Editor - Base") {
+    BlockEditorSheet(
+        title: "New Base Block",
+        draft: PreviewSupport.sampleBlockDraftBase()
+    ) { _ in }
+}
+
+#Preview("Block Editor - Overlay") {
+    BlockEditorSheet(
+        title: "New Overlay",
+        draft: PreviewSupport.sampleBlockDraftOverlay()
+    ) { _ in }
+}
+
+#Preview("Block Editor - Edit") {
+    BlockEditorSheet(
+        title: "Edit Block",
+        draft: PreviewSupport.sampleBlockDraftEdit()
+    ) { _ in }
+}
+
+#Preview("Minute Picker Row") {
+    struct MinutePickerPreview: View {
+        @State private var minuteOfDay = 9 * 60 + 45
+
+        var body: some View {
+            Form {
+                MinutePickerRow(title: "Start", minuteOfDay: $minuteOfDay)
+            }
+        }
+    }
+
+    return MinutePickerPreview()
+}

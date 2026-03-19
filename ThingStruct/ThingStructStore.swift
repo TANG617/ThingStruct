@@ -101,12 +101,12 @@ final class ThingStructStore {
 
     func todayScreenModel(currentDate: Date = .now) throws -> TodayScreenModel {
         ensureMaterialized(for: selectedDate)
-        let initialMinute = selectedDate == LocalDay(date: currentDate) ? minuteOfDay(for: currentDate) : nil
+        let currentMinute = selectedDate == LocalDay(date: currentDate) ? minuteOfDay(for: currentDate) : nil
         return try ThingStructPresentation.todayScreenModel(
             document: document,
             date: selectedDate,
             selectedBlockID: selectedBlockID,
-            initialMinute: initialMinute
+            currentMinute: currentMinute
         )
     }
 
@@ -125,7 +125,7 @@ final class ThingStructStore {
             document: document,
             date: date,
             selectedBlockID: blockID,
-            initialMinute: nil
+            currentMinute: nil
         )
         return todayModel.selectedBlock
     }

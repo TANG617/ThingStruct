@@ -3,21 +3,27 @@ import SwiftUI
 struct TodayRootView: View {
     @Environment(ThingStructStore.self) private var store
     @State private var editorSession: BlockEditorSession?
-    @State private var showingCancelConfirmation = false
+    @State private var pendingCancelBlockID: UUID?
 
     var body: some View {
         NavigationStack {
             Group {
                 if !store.isLoaded {
-                    ContentUnavailableView("Loading", systemImage: "calendar")
+                    ScreenLoadingView(
+                        title: "Loading Today",
+                        systemImage: "calendar",
+                        description: "Preparing your timeline and current context."
+                    )
                 } else {
                     let result = Result { try store.todayScreenModel() }
 
                     switch result {
                     case let .success(model):
+                        let effectiveSelectedBlockID = store.selectedBlockID ?? model.initialFocusBlockID
+
                         TodayTimelineView(
                             model: model,
-                            selectedBlockID: store.selectedBlockID,
+                            selectedBlockID: effectiveSelectedBlockID,
                             currentMinute: store.selectedDate == LocalDay.today() ? store.minuteOfDay(for: .now) : nil,
                             onSelect: { blockID in
                                 store.selectBlock(blockID)
@@ -31,7 +37,7 @@ struct TodayRootView: View {
                                     onAddOverlay: { beginOverlayCreation(for: selectedBlock) },
                                     onCreateBase: { beginBaseCreation(from: selectedBlock) },
                                     onCancel: {
-                                        showingCancelConfirmation = true
+                                        pendingCancelBlockID = selectedBlock.id
                                     }
                                 )
                                 .padding(.horizontal, 12)
@@ -40,11 +46,12 @@ struct TodayRootView: View {
                         }
 
                     case let .failure(error):
-                        ContentUnavailableView(
-                            "Unable to Load Today",
-                            systemImage: "exclamationmark.triangle",
-                            description: Text(error.localizedDescription)
-                        )
+                        RecoverableErrorView(
+                            title: "Unable to Load Today",
+                            message: error.localizedDescription
+                        ) {
+                            store.reload()
+                        }
                     }
                 }
             }
@@ -94,12 +101,16 @@ struct TodayRootView: View {
         }
         .confirmationDialog(
             "Cancel this block?",
-            isPresented: $showingCancelConfirmation,
+            isPresented: Binding(
+                get: { pendingCancelBlockID != nil },
+                set: { if !$0 { pendingCancelBlockID = nil } }
+            ),
             titleVisibility: .visible
         ) {
-            if let blockID = store.selectedBlockID {
+            if let blockID = pendingCancelBlockID {
                 Button("Cancel Block", role: .destructive) {
                     store.cancelBlock(on: store.selectedDate, blockID: blockID)
+                    pendingCancelBlockID = nil
                 }
             }
         } message: {
@@ -164,10 +175,24 @@ private struct TodayTimelineView: View {
                 .frame(height: 24 * hourHeight)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .task(id: model.initialScrollMinute) {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    proxy.scrollTo(anchorHour(for: model.initialScrollMinute), anchor: .top)
+            .overlay(alignment: .bottomTrailing) {
+                if let currentMinute {
+                    Button {
+                        scroll(to: currentMinute, anchor: .center, proxy: proxy)
+                    } label: {
+                        Image(systemName: "location.fill")
+                            .imageScale(.large)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.circle)
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 16)
+                    .accessibilityLabel("Jump to Current Time")
                 }
+            }
+            .task(id: model.initialScrollMinute) {
+                scroll(to: model.initialScrollMinute, anchor: .top, proxy: proxy)
             }
         }
     }
@@ -176,7 +201,7 @@ private struct TodayTimelineView: View {
         ForEach(0 ... 24, id: \.self) { hour in
             let y = CGFloat(hour) * hourHeight
             HStack(spacing: 0) {
-                Text(String(format: "%02d:00", hour == 24 ? 23 : hour))
+                Text(hourLabel(for: hour))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(width: labelWidth, alignment: .leading)
@@ -211,20 +236,25 @@ private struct TodayTimelineView: View {
         let y = CGFloat(block.startMinuteOfDay) / 60.0 * hourHeight
         let height = max(CGFloat(block.endMinuteOfDay - block.startMinuteOfDay) / 60.0 * hourHeight, 40)
         let xInset = CGFloat(block.layerIndex) * 18
-        let blockWidth = max(180, canvasWidth - labelWidth - 36 - xInset)
+        let blockWidth = max(0, canvasWidth - labelWidth - 20 - xInset)
+        let style = LayerVisualStyle.forBlock(layerIndex: block.layerIndex, isBlank: block.isBlank)
 
         return Button {
             onSelect(block.id)
         } label: {
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
+                HStack(alignment: .top, spacing: 8) {
                     Text(block.title)
                         .font(.headline)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Text("L\(block.layerIndex)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(style.badgeForeground)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(style.badgeBackground, in: Capsule())
                 }
 
                 Text("\(block.startMinuteOfDay.formattedTime) - \(block.endMinuteOfDay.formattedTime)")
@@ -240,10 +270,13 @@ private struct TodayTimelineView: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: height, alignment: .topLeading)
-            .background(background(for: block), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .background(style.strongSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(selectedBlockID == block.id ? Color.accentColor : Color.clear, lineWidth: 2)
+                    .stroke(
+                        selectedBlockID == block.id ? style.accent : style.border,
+                        style: StrokeStyle(lineWidth: selectedBlockID == block.id ? 2 : 1)
+                    )
             )
         }
         .buttonStyle(.plain)
@@ -251,23 +284,22 @@ private struct TodayTimelineView: View {
         .offset(x: labelWidth + 8 + xInset, y: y)
     }
 
-    private func background(for block: TimelineBlockItem) -> some ShapeStyle {
-        if block.isBlank {
-            return AnyShapeStyle(Color.secondary.opacity(0.12))
-        }
-
-        switch block.layerIndex {
-        case 0:
-            return AnyShapeStyle(.thinMaterial)
-        case 1:
-            return AnyShapeStyle(Color.accentColor.opacity(0.16))
-        default:
-            return AnyShapeStyle(Color.accentColor.opacity(0.10))
-        }
-    }
-
     private func anchorHour(for minute: Int) -> Int {
         max(0, min(23, minute / 60))
+    }
+
+    private func hourLabel(for hour: Int) -> String {
+        if hour == 24 {
+            return "24:00"
+        }
+
+        return String(format: "%02d:00", hour)
+    }
+
+    private func scroll(to minute: Int, anchor: UnitPoint, proxy: ScrollViewProxy) {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            proxy.scrollTo(anchorHour(for: minute), anchor: anchor)
+        }
     }
 }
 
@@ -277,6 +309,10 @@ private struct BlockDetailPanel: View {
     let onAddOverlay: () -> Void
     let onCreateBase: () -> Void
     let onCancel: () -> Void
+
+    private var style: LayerVisualStyle {
+        LayerVisualStyle.forBlock(layerIndex: block.layerIndex, isBlank: block.isBlank)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -290,8 +326,11 @@ private struct BlockDetailPanel: View {
                 }
                 Spacer()
                 Text("L\(block.layerIndex)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(style.badgeForeground)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(style.badgeBackground, in: Capsule())
             }
 
             if let note = block.note, !note.isEmpty {
@@ -310,29 +349,77 @@ private struct BlockDetailPanel: View {
                     }
                     .foregroundStyle(.secondary)
                 }
+
+                if block.tasks.count > 3 {
+                    Text("+\(block.tasks.count - 3) more tasks")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            HStack {
-                if block.isBlank {
-                    Button {
-                        onCreateBase()
-                    } label: {
-                        Label("Create Base Block", systemImage: "plus.rectangle.on.rectangle")
-                    }
-                    .buttonStyle(.borderedProminent)
-                } else {
-                    Button("Edit", action: onEdit)
-                        .buttonStyle(.borderedProminent)
-                    Button("Add Overlay", action: onAddOverlay)
-                        .buttonStyle(.bordered)
-                    Button("Cancel", role: .destructive, action: onCancel)
-                        .buttonStyle(.bordered)
-                }
+            ViewThatFits(in: .horizontal) {
+                horizontalActions
+                verticalActions
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(style.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(style.border, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var horizontalActions: some View {
+        HStack(spacing: 10) {
+            if block.isBlank {
+                createBaseButton
+            } else {
+                editButton
+                addOverlayButton
+                cancelButton
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var verticalActions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if block.isBlank {
+                createBaseButton
+            } else {
+                editButton
+                addOverlayButton
+                cancelButton
+            }
+        }
+    }
+
+    private var createBaseButton: some View {
+        Button {
+            onCreateBase()
+        } label: {
+            Label("Create Base Block", systemImage: "plus.rectangle.on.rectangle")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+    }
+
+    private var editButton: some View {
+        Button("Edit", action: onEdit)
+            .buttonStyle(.borderedProminent)
+    }
+
+    private var addOverlayButton: some View {
+        Button("Add Overlay", action: onAddOverlay)
+            .buttonStyle(.bordered)
+    }
+
+    private var cancelButton: some View {
+        Button("Cancel", role: .destructive, action: onCancel)
+            .buttonStyle(.bordered)
     }
 }
 
@@ -340,4 +427,66 @@ private struct BlockEditorSession: Identifiable {
     let id = UUID()
     let title: String
     let draft: BlockDraft
+}
+
+#Preview("Today Root") {
+    TodayRootView()
+        .environment(PreviewSupport.store(tab: .today))
+}
+
+#Preview("Today Root - Empty Day") {
+    TodayRootView()
+        .environment(
+            PreviewSupport.store(
+                tab: .today,
+                document: ThingStructDocument()
+            )
+        )
+}
+
+#Preview("Today Root - Loading") {
+    TodayRootView()
+        .environment(PreviewSupport.store(tab: .today, loaded: false))
+}
+
+#Preview("Today Timeline") {
+    let model = PreviewSupport.todayModel()
+    TodayTimelineView(
+        model: model,
+        selectedBlockID: model.selectedBlock?.id,
+        currentMinute: 9 * 60 + 30,
+        onSelect: { _ in }
+    )
+}
+
+#Preview("Today Timeline - Blank") {
+    let model = PreviewSupport.todayModel(document: ThingStructDocument(), currentMinute: nil)
+    TodayTimelineView(
+        model: model,
+        selectedBlockID: nil,
+        currentMinute: nil,
+        onSelect: { _ in }
+    )
+}
+
+#Preview("Block Detail Panel") {
+    BlockDetailPanel(
+        block: PreviewSupport.selectedBlockDetailModel(),
+        onEdit: {},
+        onAddOverlay: {},
+        onCreateBase: {},
+        onCancel: {}
+    )
+    .padding()
+}
+
+#Preview("Block Detail Panel - Blank") {
+    BlockDetailPanel(
+        block: PreviewSupport.blankBlockDetailModel(),
+        onEdit: {},
+        onAddOverlay: {},
+        onCreateBase: {},
+        onCancel: {}
+    )
+    .padding()
 }

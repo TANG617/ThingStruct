@@ -343,13 +343,18 @@ private struct TemplateBlockRow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            HStack {
-                Button("Edit", action: onEdit)
-                    .buttonStyle(.borderedProminent)
-                Button("Add Overlay", action: onAddOverlay)
-                    .buttonStyle(.bordered)
-                Button("Delete", role: .destructive, action: onDelete)
-                    .buttonStyle(.bordered)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    editButton
+                    addOverlayButton
+                    deleteButton
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    editButton
+                    addOverlayButton
+                    deleteButton
+                }
             }
         }
         .padding(.vertical, 4)
@@ -360,6 +365,21 @@ private struct TemplateBlockRow: View {
             return "\(resolvedRange.start.formattedTime) - \(resolvedRange.end.formattedTime)"
         }
         return block.timing.displayLabel
+    }
+
+    private var editButton: some View {
+        Button("Edit", action: onEdit)
+            .buttonStyle(.borderedProminent)
+    }
+
+    private var addOverlayButton: some View {
+        Button("Add Overlay", action: onAddOverlay)
+            .buttonStyle(.bordered)
+    }
+
+    private var deleteButton: some View {
+        Button("Delete", role: .destructive, action: onDelete)
+            .buttonStyle(.bordered)
     }
 }
 
@@ -379,4 +399,47 @@ private extension TimeBlockTiming {
             return "+\(startOffsetMinutes)m"
         }
     }
+}
+
+#Preview("Template Editor - Filled") {
+    let template = PreviewSupport.savedTemplate()
+    TemplateEditorSheet(
+        template: template,
+        assignedWeekdays: [.monday, .tuesday, .wednesday],
+        occupiedWeekdays: [.thursday, .friday]
+    ) { _, _, _ in
+    } onDelete: {
+    }
+}
+
+#Preview("Template Editor - Empty") {
+    TemplateEditorSheet(
+        template: PreviewSupport.emptyTemplate(),
+        assignedWeekdays: [],
+        occupiedWeekdays: [.monday]
+    ) { _, _, _ in
+    } onDelete: {
+    }
+}
+
+#Preview("Template Block Row - Resolved") {
+    TemplateBlockRow(
+        block: PreviewSupport.sampleTemplateBlock(),
+        resolvedRange: (8 * 60, 10 * 60 + 30),
+        onEdit: {},
+        onAddOverlay: {},
+        onDelete: {}
+    )
+    .padding()
+}
+
+#Preview("Template Block Row - Relative") {
+    TemplateBlockRow(
+        block: PreviewSupport.sampleOverlayTemplateBlock(),
+        resolvedRange: nil,
+        onEdit: {},
+        onAddOverlay: {},
+        onDelete: {}
+    )
+    .padding()
 }
