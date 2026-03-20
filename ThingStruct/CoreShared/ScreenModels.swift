@@ -62,6 +62,7 @@ public struct BlockDetailModel: Equatable, Sendable {
     public var isBlank: Bool
     public var tasks: [TaskItem]
     public var parentBlockID: UUID?
+    public var parentBlockTitle: String?
 }
 
 public struct TodayScreenModel: Equatable, Sendable {
@@ -167,13 +168,19 @@ public enum ThingStructPresentation {
                     return nil
                 }
 
+                let snappedStart = start.snapped(toStep: 5, within: 0 ... (24 * 60 - 5))
+                let snappedEnd = end.snapped(
+                    toStep: 5,
+                    within: min(snappedStart + 5, 24 * 60) ... (24 * 60)
+                )
+
                 return TimelineBlockItem(
                     id: block.id,
                     parentBlockID: block.parentBlockID,
                     title: block.title,
                     note: block.note,
-                    startMinuteOfDay: start,
-                    endMinuteOfDay: end,
+                    startMinuteOfDay: snappedStart,
+                    endMinuteOfDay: snappedEnd,
                     layerIndex: block.layerIndex,
                     isBlank: block.isBlankBaseBlock,
                     incompleteTaskCount: block.tasks.filter { !$0.isCompleted }.count
@@ -195,7 +202,7 @@ public enum ThingStructPresentation {
 
         let selectedBlock = runtimePlan.blocks
             .first(where: { $0.id == focusedBlockID && !$0.isCancelled })
-            .flatMap(detailModel)
+            .flatMap { detailModel(for: $0, allBlocks: runtimePlan.blocks) }
 
         let fallbackMinute = sortedBlocks.first(where: { $0.id == focusedBlockID })?.startMinuteOfDay
             ?? sortedBlocks.first(where: { !$0.isBlank })?.startMinuteOfDay
@@ -274,7 +281,7 @@ public enum ThingStructPresentation {
         )
     }
 
-    private nonisolated static func detailModel(for block: TimeBlock) -> BlockDetailModel? {
+    private nonisolated static func detailModel(for block: TimeBlock, allBlocks: [TimeBlock]) -> BlockDetailModel? {
         guard
             let start = block.resolvedStartMinuteOfDay,
             let end = block.resolvedEndMinuteOfDay
@@ -282,16 +289,27 @@ public enum ThingStructPresentation {
             return nil
         }
 
+        let snappedStart = start.snapped(toStep: 5, within: 0 ... (24 * 60 - 5))
+        let snappedEnd = end.snapped(
+            toStep: 5,
+            within: min(snappedStart + 5, 24 * 60) ... (24 * 60)
+        )
+
+        let parentTitle = block.parentBlockID.flatMap { parentID in
+            allBlocks.first(where: { $0.id == parentID })?.title
+        }
+
         return BlockDetailModel(
             id: block.id,
             title: block.title,
             note: block.note,
             layerIndex: block.layerIndex,
-            startMinuteOfDay: start,
-            endMinuteOfDay: end,
+            startMinuteOfDay: snappedStart,
+            endMinuteOfDay: snappedEnd,
             isBlank: block.isBlankBaseBlock,
             tasks: block.tasks.sorted(by: taskSort),
-            parentBlockID: block.parentBlockID
+            parentBlockID: block.parentBlockID,
+            parentBlockTitle: parentTitle
         )
     }
 }

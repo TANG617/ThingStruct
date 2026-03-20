@@ -291,7 +291,6 @@ struct TemplateEditorSheet: View {
             layerIndex: layerIndex,
             title: draft.title.isEmpty ? "Untitled" : draft.title,
             note: draft.note.isEmpty ? nil : draft.note,
-            reminders: draft.reminders,
             taskBlueprints: draft.tasks.enumerated().map { index, task in
                 TaskBlueprint(title: task.title, order: index)
             },
@@ -338,7 +337,6 @@ private struct TemplateBlockRow: View {
 
             HStack(spacing: 12) {
                 Label("\(block.taskBlueprints.count) tasks", systemImage: "checklist")
-                Label("\(block.reminders.count) reminders", systemImage: "bell")
             }
             .font(.caption)
             .foregroundStyle(.secondary)

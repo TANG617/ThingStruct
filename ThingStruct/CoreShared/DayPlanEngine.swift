@@ -98,6 +98,111 @@ public enum DayPlanEngine {
         return reparsedPlan
     }
 
+    public static func resizeBounds(for blockID: UUID, in plan: DayPlan) throws -> BlockResizeBounds {
+        let resolvedPlan = try resolved(plan)
+        let activeBlocks = resolvedPlan.blocks.filter { !$0.isCancelled }
+
+        guard let target = activeBlocks.first(where: { $0.id == blockID }) else {
+            throw ThingStructCoreError.missingBlock(blockID)
+        }
+
+        guard
+            let resolvedStart = target.resolvedStartMinuteOfDay,
+            let resolvedEnd = target.resolvedEndMinuteOfDay
+        else {
+            throw ThingStructCoreError.invalidResolvedRange(blockID: blockID, start: -1, end: -1)
+        }
+
+        let nextSiblingStart = activeBlocks
+            .filter { $0.parentBlockID == target.parentBlockID && $0.id != blockID }
+            .compactMap { sibling -> Int? in
+                guard let siblingStart = sibling.resolvedStartMinuteOfDay else {
+                    return nil
+                }
+
+                return siblingStart > resolvedStart ? siblingStart : nil
+            }
+            .min()
+
+        let parentEnd: Int
+        if let parentBlockID = target.parentBlockID {
+            guard
+                let parent = activeBlocks.first(where: { $0.id == parentBlockID }),
+                let resolvedParentEnd = parent.resolvedEndMinuteOfDay
+            else {
+                throw ThingStructCoreError.missingParent(blockID: blockID, parentID: parentBlockID)
+            }
+
+            parentEnd = resolvedParentEnd
+        } else {
+            parentEnd = 24 * 60
+        }
+
+        let childrenByParent = buildChildrenMap(from: activeBlocks)
+        let descendantIDs = collectDescendants(startingAt: blockID, childrenByParent: childrenByParent)
+        let deepestDescendantEnd = activeBlocks
+            .filter { descendantIDs.contains($0.id) }
+            .compactMap(\.resolvedEndMinuteOfDay)
+            .max() ?? (resolvedStart + 5)
+
+        let rawMinimumEnd = max(resolvedStart + 5, deepestDescendantEnd)
+        let rawMaximumEnd = min(parentEnd, nextSiblingStart ?? parentEnd)
+        let minimumEnd = rawMinimumEnd.roundedUp(toStep: 5)
+        let maximumEnd = rawMaximumEnd.roundedDown(toStep: 5)
+
+        guard minimumEnd <= maximumEnd else {
+            throw ThingStructCoreError.invalidResolvedRange(
+                blockID: blockID,
+                start: resolvedStart,
+                end: rawMaximumEnd
+            )
+        }
+
+        return BlockResizeBounds(
+            blockID: blockID,
+            startMinuteOfDay: resolvedStart,
+            endMinuteOfDay: resolvedEnd.aligned(toStep: 5, within: minimumEnd ... maximumEnd) ?? minimumEnd,
+            minimumEndMinuteOfDay: minimumEnd,
+            maximumEndMinuteOfDay: maximumEnd
+        )
+    }
+
+    public static func resizeBlockEnd(
+        _ blockID: UUID,
+        in plan: DayPlan,
+        proposedEndMinuteOfDay: Int
+    ) throws -> DayPlan {
+        let bounds = try resizeBounds(for: blockID, in: plan)
+        let alignedEnd = proposedEndMinuteOfDay.aligned(
+            toStep: 5,
+            within: bounds.minimumEndMinuteOfDay ... bounds.maximumEndMinuteOfDay
+        ) ?? bounds.endMinuteOfDay
+        var updatedPlan = try resolved(plan)
+
+        guard let blockIndex = updatedPlan.blocks.firstIndex(where: { $0.id == blockID }) else {
+            throw ThingStructCoreError.missingBlock(blockID)
+        }
+
+        switch updatedPlan.blocks[blockIndex].timing {
+        case let .absolute(startMinuteOfDay, _):
+            updatedPlan.blocks[blockIndex].timing = .absolute(
+                startMinuteOfDay: startMinuteOfDay,
+                requestedEndMinuteOfDay: alignedEnd
+            )
+
+        case let .relative(startOffsetMinutes, _):
+            updatedPlan.blocks[blockIndex].timing = .relative(
+                startOffsetMinutes: startOffsetMinutes,
+                requestedDurationMinutes: max(alignedEnd - bounds.startMinuteOfDay, 5)
+            )
+        }
+
+        updatedPlan.blocks[blockIndex].resolvedStartMinuteOfDay = nil
+        updatedPlan.blocks[blockIndex].resolvedEndMinuteOfDay = nil
+
+        return try resolved(updatedPlan)
+    }
+
     public static func activeSelection(in plan: DayPlan, at minuteOfDay: Int) throws -> ActiveSelection {
         let runtimePlan = try runtimeResolved(plan)
         let activeBlocks = runtimePlan.blocks
@@ -405,7 +510,6 @@ public enum DayPlanEngine {
             layerIndex: 0,
             kind: .blankBase,
             title: "Blank",
-            reminders: [],
             tasks: [],
             timing: .absolute(startMinuteOfDay: start, requestedEndMinuteOfDay: end),
             resolvedStartMinuteOfDay: start,

@@ -18,7 +18,7 @@ struct NowRootView: View {
                         let result = Result { try store.nowScreenModel(at: context.date) }
 
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 22) {
+                            VStack(alignment: .leading, spacing: 20) {
                                 switch result {
                                 case let .success(model):
                                     NowNotesSectionView(sections: model.noteSections)
@@ -39,16 +39,18 @@ struct NowRootView: View {
                                     }
                                 }
                             }
-                            .padding(20)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 16)
                             .padding(.bottom, 28)
                         }
+                        .navigationTitle(localDay.nowNavigationTitle)
                         .task(id: localDay) {
                             store.ensureMaterialized(for: localDay)
                         }
                     }
                 }
             }
-            .navigationTitle("Now")
+            .navigationTitle(LocalDay.today().nowNavigationTitle)
             .navigationBarTitleDisplayMode(.large)
         }
     }
@@ -59,10 +61,10 @@ private struct NowNotesSectionView: View {
 
     var body: some View {
         if !sections.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text("Notes")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.primary)
 
                 ForEach(sections) { section in
                     NowNoteCard(section: section)
@@ -209,8 +211,8 @@ private struct NowTaskCard: View {
     }
 
     private var expandedTaskCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(section.title)
                         .font(section.isCurrent ? .headline : .subheadline.weight(.semibold))
@@ -218,7 +220,7 @@ private struct NowTaskCard: View {
 
                     if completedTaskCount > 0 {
                         Text(completedTaskCount == 1 ? "1 task completed" : "\(completedTaskCount) tasks completed")
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -257,7 +259,7 @@ private struct NowTaskCard: View {
                 .foregroundStyle(.primary)
             }
         }
-        .padding(section.isCurrent ? 20 : 18)
+        .padding(section.isCurrent ? 18 : 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(style.strongSurface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
@@ -278,7 +280,7 @@ private struct NowTaskCard: View {
                     .lineLimit(2)
 
                 Text(completedSummary)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
@@ -292,7 +294,7 @@ private struct NowTaskCard: View {
                 )
             }
         }
-        .padding(16)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(style.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(

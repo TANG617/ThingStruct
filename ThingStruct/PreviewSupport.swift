@@ -109,7 +109,8 @@ enum PreviewSupport {
             endMinuteOfDay: blankBlock.endMinuteOfDay,
             isBlank: true,
             tasks: [],
-            parentBlockID: blankBlock.parentBlockID
+            parentBlockID: blankBlock.parentBlockID,
+            parentBlockTitle: nil
         )
     }
 
@@ -126,10 +127,6 @@ enum PreviewSupport {
         draft.tasks = [
             TaskItem(title: "Plan the session"),
             TaskItem(title: "Write the draft", order: 1)
-        ]
-        draft.reminders = [
-            ReminderRule(triggerMode: .atStart),
-            ReminderRule(triggerMode: .beforeStart, offsetMinutes: 10)
         ]
         return draft
     }
@@ -166,7 +163,6 @@ enum PreviewSupport {
             layerIndex: 1,
             title: "Overlay Sprint",
             note: "Relative block preview",
-            reminders: [ReminderRule(triggerMode: .beforeStart, offsetMinutes: 5)],
             taskBlueprints: [
                 TaskBlueprint(title: "Prepare"),
                 TaskBlueprint(title: "Execute", order: 1)

@@ -23,6 +23,18 @@ extension LocalDay {
         formatter.timeStyle = .none
         return formatter.string(from: date)
     }
+
+    var nowNavigationTitle: String {
+        let components = DateComponents(year: year, month: month, day: day)
+        guard let date = Calendar.current.date(from: components) else {
+            return description
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE MMM d"
+        return formatter.string(from: date)
+    }
 }
 
 struct LayerVisualStyle {

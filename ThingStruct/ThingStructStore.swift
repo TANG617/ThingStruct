@@ -110,6 +110,19 @@ final class ThingStructStore {
         )
     }
 
+    func currentActiveBlockID(currentDate: Date = .now) -> UUID? {
+        let localDay = LocalDay(date: currentDate)
+        guard selectedDate == localDay else { return nil }
+
+        ensureMaterialized(for: selectedDate)
+        let plan = document.dayPlan(for: selectedDate) ?? DayPlan(date: selectedDate)
+
+        return try? DayPlanEngine.activeSelection(
+            in: plan,
+            at: minuteOfDay(for: currentDate)
+        ).activeBlock?.id
+    }
+
     func templatesScreenModel(referenceDay: LocalDay? = nil) throws -> TemplatesScreenModel {
         let resolvedReferenceDay = referenceDay ?? LocalDay.today()
         ensureMaterialized(for: resolvedReferenceDay)
@@ -149,27 +162,36 @@ final class ThingStructStore {
         }
     }
 
-    func saveBlockDraft(_ draft: BlockDraft, for date: LocalDay) throws {
+    func saveBlockDraft(_ draft: BlockDraft, for date: LocalDay) throws -> UUID {
         ensureMaterialized(for: date)
-        guard var plan = document.dayPlan(for: date) else { return }
+        guard var plan = document.dayPlan(for: date) else {
+            throw ThingStructCoreError.missingDayPlanForDate(date)
+        }
+
+        let savedBlockID: UUID
 
         switch draft.mode {
         case .createBase:
-            plan.blocks.append(draft.makeBlock(dayPlanID: plan.id))
+            let block = draft.makeBlock(dayPlanID: plan.id)
+            savedBlockID = block.id
+            plan.blocks.append(block)
 
         case let .createOverlay(parentBlockID, layerIndex):
             var block = draft.makeBlock(dayPlanID: plan.id)
             block.parentBlockID = parentBlockID
             block.layerIndex = layerIndex
+            savedBlockID = block.id
             plan.blocks.append(block)
 
         case let .edit(blockID):
             guard let blockIndex = plan.blocks.firstIndex(where: { $0.id == blockID }) else {
-                return
+                throw ThingStructCoreError.missingBlock(blockID)
             }
 
             let existing = plan.blocks[blockIndex]
-            guard !existing.isBlankBaseBlock else { return }
+            guard !existing.isBlankBaseBlock else {
+                throw ThingStructCoreError.missingBlock(existing.id)
+            }
 
             var updated = draft.makeBlock(dayPlanID: plan.id)
             updated.id = existing.id
@@ -177,12 +199,14 @@ final class ThingStructStore {
             updated.layerIndex = existing.layerIndex
             updated.isCancelled = existing.isCancelled
             plan.blocks[blockIndex] = updated
+            savedBlockID = existing.id
         }
 
         plan.hasUserEdits = true
         let resolved = try DayPlanEngine.resolved(plan)
         upsert(dayPlan: resolved)
         try persist()
+        return savedBlockID
     }
 
     func cancelBlock(on date: LocalDay, blockID: UUID) {
@@ -195,6 +219,32 @@ final class ThingStructStore {
             if selectedBlockID == blockID {
                 selectedBlockID = nil
             }
+            try persist()
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    func resizeBounds(on date: LocalDay, blockID: UUID) -> BlockResizeBounds? {
+        ensureMaterialized(for: date)
+        guard let plan = document.dayPlan(for: date) else {
+            return nil
+        }
+
+        return try? DayPlanEngine.resizeBounds(for: blockID, in: plan)
+    }
+
+    func resizeBlockEnd(on date: LocalDay, blockID: UUID, proposedEndMinuteOfDay: Int) {
+        do {
+            ensureMaterialized(for: date)
+            guard let existingPlan = document.dayPlan(for: date) else { return }
+            var resized = try DayPlanEngine.resizeBlockEnd(
+                blockID,
+                in: existingPlan,
+                proposedEndMinuteOfDay: proposedEndMinuteOfDay
+            )
+            resized.hasUserEdits = true
+            upsert(dayPlan: resized)
             try persist()
         } catch {
             lastErrorMessage = error.localizedDescription

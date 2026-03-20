@@ -24,8 +24,27 @@ struct BlockDraft: Equatable {
     var relativeOffsetMinutes: Int
     var hasRelativeDuration: Bool
     var relativeDurationMinutes: Int
-    var reminders: [ReminderRule]
     var tasks: [TaskItem]
+
+    private var snappedAbsoluteStartMinuteOfDay: Int {
+        absoluteStartMinuteOfDay.snapped(toStep: 5, within: 0 ... (24 * 60 - 5))
+    }
+
+    private var snappedAbsoluteEndMinuteOfDay: Int {
+        let minimumEnd = min(snappedAbsoluteStartMinuteOfDay + 5, 24 * 60)
+        return max(
+            absoluteEndMinuteOfDay.snapped(toStep: 5, within: minimumEnd ... (24 * 60)),
+            minimumEnd
+        )
+    }
+
+    private var snappedRelativeOffsetMinutes: Int {
+        relativeOffsetMinutes.snapped(toStep: 5, within: 0 ... 720)
+    }
+
+    private var snappedRelativeDurationMinutes: Int {
+        relativeDurationMinutes.snapped(toStep: 5, within: 5 ... 720)
+    }
 
     func makeBlock(dayPlanID: UUID) -> TimeBlock {
         TimeBlock(
@@ -33,7 +52,6 @@ struct BlockDraft: Equatable {
             layerIndex: 0,
             title: title.isEmpty ? "Untitled" : title,
             note: note.isEmpty ? nil : note,
-            reminders: reminders,
             tasks: normalizedTasks,
             timing: timing
         )
@@ -51,14 +69,14 @@ struct BlockDraft: Equatable {
         switch timingMode {
         case .absolute:
             return .absolute(
-                startMinuteOfDay: absoluteStartMinuteOfDay,
-                requestedEndMinuteOfDay: hasExplicitAbsoluteEnd ? absoluteEndMinuteOfDay : nil
+                startMinuteOfDay: snappedAbsoluteStartMinuteOfDay,
+                requestedEndMinuteOfDay: hasExplicitAbsoluteEnd ? snappedAbsoluteEndMinuteOfDay : nil
             )
 
         case .relative:
             return .relative(
-                startOffsetMinutes: relativeOffsetMinutes,
-                requestedDurationMinutes: hasRelativeDuration ? relativeDurationMinutes : nil
+                startOffsetMinutes: snappedRelativeOffsetMinutes,
+                requestedDurationMinutes: hasRelativeDuration ? snappedRelativeDurationMinutes : nil
             )
         }
     }
@@ -71,13 +89,15 @@ extension BlockDraft {
             title: "",
             note: "",
             timingMode: .absolute,
-            absoluteStartMinuteOfDay: startMinute,
+            absoluteStartMinuteOfDay: startMinute.snapped(toStep: 5, within: 0 ... (24 * 60 - 5)),
             hasExplicitAbsoluteEnd: true,
-            absoluteEndMinuteOfDay: endMinute,
+            absoluteEndMinuteOfDay: max(
+                endMinute.snapped(toStep: 5, within: 5 ... (24 * 60)),
+                startMinute.snapped(toStep: 5, within: 0 ... (24 * 60 - 5)) + 5
+            ),
             relativeOffsetMinutes: 0,
             hasRelativeDuration: false,
             relativeDurationMinutes: 60,
-            reminders: [],
             tasks: []
         )
     }
@@ -94,7 +114,6 @@ extension BlockDraft {
             relativeOffsetMinutes: 0,
             hasRelativeDuration: true,
             relativeDurationMinutes: 60,
-            reminders: [],
             tasks: []
         )
     }
@@ -111,19 +130,24 @@ extension BlockDraft {
         switch sourceBlock.timing {
         case let .absolute(startMinuteOfDay, requestedEndMinuteOfDay):
             timingMode = .absolute
-            absoluteStart = startMinuteOfDay
-            absoluteEnd = requestedEndMinuteOfDay ?? detail.endMinuteOfDay
+            absoluteStart = startMinuteOfDay.snapped(toStep: 5, within: 0 ... (24 * 60 - 5))
+            absoluteEnd = (requestedEndMinuteOfDay ?? detail.endMinuteOfDay)
+                .snapped(toStep: 5, within: 5 ... (24 * 60))
             relativeOffset = 0
-            relativeDuration = max(detail.endMinuteOfDay - detail.startMinuteOfDay, 30)
+            relativeDuration = max(
+                (detail.endMinuteOfDay - detail.startMinuteOfDay).snapped(toStep: 5, within: 5 ... 720),
+                30
+            )
             hasAbsoluteEnd = requestedEndMinuteOfDay != nil
             hasDuration = false
 
         case let .relative(startOffsetMinutes, requestedDurationMinutes):
             timingMode = .relative
-            absoluteStart = detail.startMinuteOfDay
-            absoluteEnd = detail.endMinuteOfDay
-            relativeOffset = startOffsetMinutes
-            relativeDuration = requestedDurationMinutes ?? max(detail.endMinuteOfDay - detail.startMinuteOfDay, 30)
+            absoluteStart = detail.startMinuteOfDay.snapped(toStep: 5, within: 0 ... (24 * 60 - 5))
+            absoluteEnd = detail.endMinuteOfDay.snapped(toStep: 5, within: 5 ... (24 * 60))
+            relativeOffset = startOffsetMinutes.snapped(toStep: 5, within: 0 ... 720)
+            relativeDuration = (requestedDurationMinutes ?? max(detail.endMinuteOfDay - detail.startMinuteOfDay, 30))
+                .snapped(toStep: 5, within: 5 ... 720)
             hasAbsoluteEnd = false
             hasDuration = requestedDurationMinutes != nil
         }
@@ -139,7 +163,6 @@ extension BlockDraft {
             relativeOffsetMinutes: relativeOffset,
             hasRelativeDuration: hasDuration,
             relativeDurationMinutes: relativeDuration,
-            reminders: sourceBlock.reminders,
             tasks: detail.tasks
         )
     }
@@ -156,8 +179,9 @@ extension BlockDraft {
         switch templateBlock.timing {
         case let .absolute(startMinuteOfDay, requestedEndMinuteOfDay):
             timingMode = .absolute
-            absoluteStart = startMinuteOfDay
-            absoluteEnd = requestedEndMinuteOfDay ?? startMinuteOfDay + 60
+            absoluteStart = startMinuteOfDay.snapped(toStep: 5, within: 0 ... (24 * 60 - 5))
+            absoluteEnd = (requestedEndMinuteOfDay ?? startMinuteOfDay + 60)
+                .snapped(toStep: 5, within: 5 ... (24 * 60))
             relativeOffset = 0
             relativeDuration = 60
             hasAbsoluteEnd = requestedEndMinuteOfDay != nil
@@ -167,8 +191,8 @@ extension BlockDraft {
             timingMode = .relative
             absoluteStart = 0
             absoluteEnd = 60
-            relativeOffset = startOffsetMinutes
-            relativeDuration = requestedDurationMinutes ?? 60
+            relativeOffset = startOffsetMinutes.snapped(toStep: 5, within: 0 ... 720)
+            relativeDuration = (requestedDurationMinutes ?? 60).snapped(toStep: 5, within: 5 ... 720)
             hasAbsoluteEnd = false
             hasDuration = requestedDurationMinutes != nil
         }
@@ -184,7 +208,6 @@ extension BlockDraft {
             relativeOffsetMinutes: relativeOffset,
             hasRelativeDuration: hasDuration,
             relativeDurationMinutes: relativeDuration,
-            reminders: templateBlock.reminders,
             tasks: templateBlock.taskBlueprints
                 .sorted { lhs, rhs in
                     if lhs.order != rhs.order {
@@ -203,6 +226,9 @@ struct BlockEditorSheet: View {
     let title: String
     @State var draft: BlockDraft
     let onSave: (BlockDraft) -> Void
+    var onCancelBlock: (() -> Void)? = nil
+
+    @State private var isShowingCancelConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -222,10 +248,18 @@ struct BlockEditorSheet: View {
                     .pickerStyle(.segmented)
 
                     if draft.timingMode == .absolute {
-                        MinutePickerRow(title: "Start", minuteOfDay: $draft.absoluteStartMinuteOfDay)
+                        MinutePickerRow(
+                            title: "Start",
+                            minuteOfDay: $draft.absoluteStartMinuteOfDay,
+                            validRange: 0 ... (24 * 60 - 5)
+                        )
                         Toggle("Explicit End", isOn: $draft.hasExplicitAbsoluteEnd)
                         if draft.hasExplicitAbsoluteEnd {
-                            MinutePickerRow(title: "End", minuteOfDay: $draft.absoluteEndMinuteOfDay)
+                            MinutePickerRow(
+                                title: "End",
+                                minuteOfDay: $draft.absoluteEndMinuteOfDay,
+                                validRange: 5 ... (24 * 60)
+                            )
                         }
                     } else {
                         Stepper("Offset: \(draft.relativeOffsetMinutes) min", value: $draft.relativeOffsetMinutes, in: 0 ... 720, step: 5)
@@ -256,36 +290,13 @@ struct BlockEditorSheet: View {
                     }
                 }
 
-                Section("Reminders") {
-                    if draft.reminders.isEmpty {
-                        Text("No reminders")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    ForEach(draft.reminders) { reminder in
-                        HStack {
-                            Text(reminder.triggerMode == .atStart ? "At Start" : "Before Start")
-                            Spacer()
-                            if reminder.triggerMode == .beforeStart {
-                                Text("\(reminder.offsetMinutes) min")
-                                    .foregroundStyle(.secondary)
-                            }
+                if onCancelBlock != nil {
+                    Section {
+                        Button("Cancel Block", role: .destructive) {
+                            isShowingCancelConfirmation = true
                         }
-                    }
-                    .onDelete { offsets in
-                        draft.reminders.remove(atOffsets: offsets)
-                    }
-
-                    Button {
-                        draft.reminders.append(ReminderRule(triggerMode: .atStart))
-                    } label: {
-                        Label("Add Start Reminder", systemImage: "bell")
-                    }
-
-                    Button {
-                        draft.reminders.append(ReminderRule(triggerMode: .beforeStart, offsetMinutes: 5))
-                    } label: {
-                        Label("Add 5-Min Reminder", systemImage: "bell.badge")
+                    } footer: {
+                        Text("This keeps history but removes the block from the active plan and collapses its descendants.")
                     }
                 }
             }
@@ -308,19 +319,32 @@ struct BlockEditorSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .confirmationDialog(
+            "Cancel this block?",
+            isPresented: $isShowingCancelConfirmation,
+            titleVisibility: .visible
+        ) {
+            if let onCancelBlock {
+                Button("Cancel Block", role: .destructive) {
+                    onCancelBlock()
+                    dismiss()
+                }
+            }
+        }
     }
 }
 
 private struct MinutePickerRow: View {
     let title: String
     @Binding var minuteOfDay: Int
+    let validRange: ClosedRange<Int>
 
     var body: some View {
         DatePicker(
             title,
             selection: Binding(
                 get: { date(for: minuteOfDay) },
-                set: { minuteOfDay = minuteOfDay(from: $0) }
+                set: { minuteOfDay = minuteOfDay(from: $0).snapped(toStep: 5, within: validRange) }
             ),
             displayedComponents: .hourAndMinute
         )
@@ -328,13 +352,20 @@ private struct MinutePickerRow: View {
 
     private func date(for minuteOfDay: Int) -> Date {
         Calendar.current.date(
-            from: DateComponents(year: 2001, month: 1, day: 1, hour: minuteOfDay / 60, minute: minuteOfDay % 60)
-        ) ?? .now
+            byAdding: .minute,
+            value: minuteOfDay,
+            to: referenceDate
+        ) ?? referenceDate
     }
 
     private func minuteOfDay(from date: Date) -> Int {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
-        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
+        Calendar.current.dateComponents([.minute], from: referenceDate, to: date).minute ?? 0
+    }
+
+    private var referenceDate: Date {
+        Calendar.current.startOfDay(for: Calendar.current.date(
+            from: DateComponents(year: 2001, month: 1, day: 1)
+        ) ?? .now)
     }
 }
 
@@ -359,13 +390,26 @@ private struct MinutePickerRow: View {
     ) { _ in }
 }
 
+#Preview("Block Editor - Edit With Cancel") {
+    BlockEditorSheet(
+        title: "Edit Block",
+        draft: PreviewSupport.sampleBlockDraftEdit()
+    ) { _ in
+    } onCancelBlock: {
+    }
+}
+
 #Preview("Minute Picker Row") {
     struct MinutePickerPreview: View {
         @State private var minuteOfDay = 9 * 60 + 45
 
         var body: some View {
             Form {
-                MinutePickerRow(title: "Start", minuteOfDay: $minuteOfDay)
+                MinutePickerRow(
+                    title: "Start",
+                    minuteOfDay: $minuteOfDay,
+                    validRange: 0 ... (24 * 60 - 5)
+                )
             }
         }
     }

@@ -85,6 +85,52 @@ public extension Calendar {
     }
 }
 
+public extension Int {
+    nonisolated func snapped(toStep step: Int, within range: ClosedRange<Int>) -> Int {
+        precondition(step > 0, "Step must be positive.")
+
+        let clamped = Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
+        let offset = clamped - range.lowerBound
+        let snappedOffset = Int((Double(offset) / Double(step)).rounded()) * step
+        return Swift.min(
+            Swift.max(range.lowerBound + snappedOffset, range.lowerBound),
+            range.upperBound
+        )
+    }
+
+    nonisolated func roundedDown(toStep step: Int) -> Int {
+        precondition(step > 0, "Step must be positive.")
+        return Int(floor(Double(self) / Double(step))) * step
+    }
+
+    nonisolated func roundedUp(toStep step: Int) -> Int {
+        precondition(step > 0, "Step must be positive.")
+        return Int(ceil(Double(self) / Double(step))) * step
+    }
+
+    nonisolated func aligned(toStep step: Int, within range: ClosedRange<Int>) -> Int? {
+        precondition(step > 0, "Step must be positive.")
+
+        let lowerBound = range.lowerBound.roundedUp(toStep: step)
+        let upperBound = range.upperBound.roundedDown(toStep: step)
+        guard lowerBound <= upperBound else {
+            return nil
+        }
+
+        let candidates = [roundedDown(toStep: step), roundedUp(toStep: step), lowerBound, upperBound]
+            .filter { lowerBound ... upperBound ~= $0 }
+
+        return candidates.min { lhs, rhs in
+            let lhsDistance = abs(lhs - self)
+            let rhsDistance = abs(rhs - self)
+            if lhsDistance != rhsDistance {
+                return lhsDistance < rhsDistance
+            }
+            return lhs < rhs
+        }
+    }
+}
+
 public enum Weekday: Int, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case sunday = 1
     case monday = 2
@@ -155,30 +201,9 @@ public extension Set where Element == Weekday {
     }
 }
 
-public enum ReminderTriggerMode: String, Codable, Hashable, Sendable {
-    case atStart
-    case beforeStart
-}
-
 public enum TimeBlockKind: String, Equatable, Codable, Sendable {
     case userDefined
     case blankBase
-}
-
-public struct ReminderRule: Identifiable, Equatable, Codable, Sendable {
-    public var id: UUID
-    public var triggerMode: ReminderTriggerMode
-    public var offsetMinutes: Int
-
-    public init(
-        id: UUID = UUID(),
-        triggerMode: ReminderTriggerMode,
-        offsetMinutes: Int = 0
-    ) {
-        self.id = id
-        self.triggerMode = triggerMode
-        self.offsetMinutes = offsetMinutes
-    }
 }
 
 public struct TaskItem: Identifiable, Equatable, Codable, Sendable {
@@ -232,7 +257,6 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
     public var kind: TimeBlockKind
     public var title: String
     public var note: String?
-    public var reminders: [ReminderRule]
     public var tasks: [TaskItem]
     public var timing: TimeBlockTiming
     public var resolvedStartMinuteOfDay: Int?
@@ -247,7 +271,6 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
         kind: TimeBlockKind = .userDefined,
         title: String,
         note: String? = nil,
-        reminders: [ReminderRule] = [],
         tasks: [TaskItem] = [],
         timing: TimeBlockTiming,
         resolvedStartMinuteOfDay: Int? = nil,
@@ -261,7 +284,6 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
         self.kind = kind
         self.title = title
         self.note = note
-        self.reminders = reminders
         self.tasks = tasks
         self.timing = timing
         self.resolvedStartMinuteOfDay = resolvedStartMinuteOfDay
@@ -277,6 +299,28 @@ public extension TimeBlock {
 
     nonisolated var isBlankBaseBlock: Bool {
         kind == .blankBase
+    }
+}
+
+public struct BlockResizeBounds: Equatable, Sendable {
+    public var blockID: UUID
+    public var startMinuteOfDay: Int
+    public var endMinuteOfDay: Int
+    public var minimumEndMinuteOfDay: Int
+    public var maximumEndMinuteOfDay: Int
+
+    public init(
+        blockID: UUID,
+        startMinuteOfDay: Int,
+        endMinuteOfDay: Int,
+        minimumEndMinuteOfDay: Int,
+        maximumEndMinuteOfDay: Int
+    ) {
+        self.blockID = blockID
+        self.startMinuteOfDay = startMinuteOfDay
+        self.endMinuteOfDay = endMinuteOfDay
+        self.minimumEndMinuteOfDay = minimumEndMinuteOfDay
+        self.maximumEndMinuteOfDay = maximumEndMinuteOfDay
     }
 }
 
@@ -319,7 +363,6 @@ public struct BlockTemplate: Identifiable, Equatable, Codable, Sendable {
     public var layerIndex: Int
     public var title: String
     public var note: String?
-    public var reminders: [ReminderRule]
     public var taskBlueprints: [TaskBlueprint]
     public var timing: TimeBlockTiming
 
@@ -329,7 +372,6 @@ public struct BlockTemplate: Identifiable, Equatable, Codable, Sendable {
         layerIndex: Int,
         title: String,
         note: String? = nil,
-        reminders: [ReminderRule] = [],
         taskBlueprints: [TaskBlueprint] = [],
         timing: TimeBlockTiming
     ) {
@@ -338,7 +380,6 @@ public struct BlockTemplate: Identifiable, Equatable, Codable, Sendable {
         self.layerIndex = layerIndex
         self.title = title
         self.note = note
-        self.reminders = reminders
         self.taskBlueprints = taskBlueprints
         self.timing = timing
     }

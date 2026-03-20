@@ -75,6 +75,30 @@ final class PresentationTests: XCTestCase {
         XCTAssertFalse(model.taskSections[1].isComplete)
     }
 
+    func testTodayScreenModelRoundsBlockTimesToNearestFiveMinutes() throws {
+        let blockID = UUID()
+        let plan = makePlan(blocks: [
+            baseBlock(
+                id: blockID,
+                title: "Morning",
+                start: 543,
+                requestedEnd: 607
+            )
+        ])
+
+        let model = try ThingStructPresentation.todayScreenModel(
+            document: ThingStructDocument(dayPlans: [try DayPlanEngine.resolved(plan)]),
+            date: LocalDay(year: 2026, month: 3, day: 19),
+            selectedBlockID: blockID,
+            currentMinute: nil
+        )
+
+        XCTAssertEqual(model.blocks.first(where: { $0.id == blockID })?.startMinuteOfDay, 545)
+        XCTAssertEqual(model.blocks.first(where: { $0.id == blockID })?.endMinuteOfDay, 605)
+        XCTAssertEqual(model.selectedBlock?.startMinuteOfDay, 545)
+        XCTAssertEqual(model.selectedBlock?.endMinuteOfDay, 605)
+    }
+
     func testNowScreenModelGroupsNotesAndTasksByHighestLayerFirst() throws {
         let baseID = UUID()
         let overlayID = UUID()
@@ -164,6 +188,38 @@ final class PresentationTests: XCTestCase {
         XCTAssertEqual(model.initialFocusBlockID, overlayID)
         XCTAssertEqual(model.selectedBlock?.id, overlayID)
         XCTAssertEqual(model.initialScrollMinute, 570)
+    }
+
+    func testTodayScreenModelIncludesParentTitleForOverlayDetail() throws {
+        let baseID = UUID()
+        let overlayID = UUID()
+        let plan = makePlan(blocks: [
+            baseBlock(
+                id: baseID,
+                title: "Morning",
+                start: 540,
+                requestedEnd: 720
+            ),
+            overlayRelative(
+                id: overlayID,
+                parentID: baseID,
+                layerIndex: 1,
+                title: "Focus Sprint",
+                offset: 30,
+                duration: 60
+            )
+        ])
+
+        let model = try ThingStructPresentation.todayScreenModel(
+            document: ThingStructDocument(dayPlans: [try DayPlanEngine.resolved(plan)]),
+            date: LocalDay(year: 2026, month: 3, day: 19),
+            selectedBlockID: overlayID,
+            currentMinute: nil
+        )
+
+        XCTAssertEqual(model.selectedBlock?.id, overlayID)
+        XCTAssertEqual(model.selectedBlock?.parentBlockID, baseID)
+        XCTAssertEqual(model.selectedBlock?.parentBlockTitle, "Morning")
     }
 
     func testTemplatesScreenModelUsesOverrideForTomorrowSummary() throws {
