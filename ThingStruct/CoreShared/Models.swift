@@ -306,6 +306,8 @@ public struct BlockResizeBounds: Equatable, Sendable {
     public var blockID: UUID
     public var startMinuteOfDay: Int
     public var endMinuteOfDay: Int
+    public var minimumStartMinuteOfDay: Int
+    public var maximumStartMinuteOfDay: Int
     public var minimumEndMinuteOfDay: Int
     public var maximumEndMinuteOfDay: Int
 
@@ -313,12 +315,16 @@ public struct BlockResizeBounds: Equatable, Sendable {
         blockID: UUID,
         startMinuteOfDay: Int,
         endMinuteOfDay: Int,
+        minimumStartMinuteOfDay: Int,
+        maximumStartMinuteOfDay: Int,
         minimumEndMinuteOfDay: Int,
         maximumEndMinuteOfDay: Int
     ) {
         self.blockID = blockID
         self.startMinuteOfDay = startMinuteOfDay
         self.endMinuteOfDay = endMinuteOfDay
+        self.minimumStartMinuteOfDay = minimumStartMinuteOfDay
+        self.maximumStartMinuteOfDay = maximumStartMinuteOfDay
         self.minimumEndMinuteOfDay = minimumEndMinuteOfDay
         self.maximumEndMinuteOfDay = maximumEndMinuteOfDay
     }

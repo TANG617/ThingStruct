@@ -251,6 +251,23 @@ final class ThingStructStore {
         }
     }
 
+    func resizeBlockStart(on date: LocalDay, blockID: UUID, proposedStartMinuteOfDay: Int) {
+        do {
+            ensureMaterialized(for: date)
+            guard let existingPlan = document.dayPlan(for: date) else { return }
+            var resized = try DayPlanEngine.resizeBlockStart(
+                blockID,
+                in: existingPlan,
+                proposedStartMinuteOfDay: proposedStartMinuteOfDay
+            )
+            resized.hasUserEdits = true
+            upsert(dayPlan: resized)
+            try persist()
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
     func saveSuggestedTemplate(from sourceDate: LocalDay, title: String) {
         do {
             let suggested = try TemplateEngine.suggestedTemplates(

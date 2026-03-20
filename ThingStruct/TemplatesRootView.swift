@@ -28,26 +28,27 @@ struct TemplatesRootView: View {
 
                     switch result {
                     case let .success(model):
-                        List {
-                            Picker("Section", selection: $selectedSection) {
-                                ForEach(TemplatesSection.allCases) { section in
-                                    Text(section.rawValue).tag(section)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                            .listRowBackground(Color.clear)
+                        VStack(spacing: 0) {
+                            sectionPicker
 
-                            switch selectedSection {
-                            case .suggested:
-                                suggestedSection(model: model)
-                            case .saved:
-                                savedSection(model: model)
-                            case .schedule:
-                                scheduleSection(model: model)
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 24) {
+                                    switch selectedSection {
+                                    case .suggested:
+                                        suggestedSection(model: model)
+                                    case .saved:
+                                        savedSection(model: model)
+                                    case .schedule:
+                                        scheduleSection(model: model)
+                                    }
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.top, 8)
+                                .padding(.bottom, 32)
                             }
+                            .background(Color(uiColor: .systemGroupedBackground))
                         }
-                        .listStyle(.insetGrouped)
+                        .background(Color(uiColor: .systemGroupedBackground))
 
                     case let .failure(error):
                         RecoverableErrorView(
@@ -60,7 +61,7 @@ struct TemplatesRootView: View {
                 }
             }
             .navigationTitle("Templates")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
         }
         .sheet(item: $saveSession) { session in
             SaveTemplateSheet(sourceDate: session.sourceDate) { title in
@@ -88,150 +89,402 @@ struct TemplatesRootView: View {
         }
     }
 
+    private var sectionPicker: some View {
+        Picker("Section", selection: $selectedSection) {
+            ForEach(TemplatesSection.allCases) { section in
+                Text(section.rawValue).tag(section)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
+        .background(Color(uiColor: .systemGroupedBackground))
+    }
+
     @ViewBuilder
     private func suggestedSection(model: TemplatesScreenModel) -> some View {
-        if model.suggestedTemplates.isEmpty {
-            ContentUnavailableView(
-                "No Suggested Templates",
-                systemImage: "calendar.badge.exclamationmark",
-                description: Text("Recent days do not yet contain any exportable plans.")
-            )
-        } else {
-            Section("Recent 3 Days") {
-                ForEach(model.suggestedTemplates) { template in
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(template.sourceDate.titleText)
-                            .font(.headline)
-                        Text(template.previewTitles.joined(separator: " · "))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
+        let slots = suggestedSlots(from: model)
+        let hasSuggestions = slots.contains { $0.template != nil }
 
-                        ViewThatFits(in: .horizontal) {
-                            HStack {
-                                Label("\(template.baseBlockCount) base", systemImage: "rectangle.stack")
-                                Label("\(template.totalBlockCount) total", systemImage: "square.stack.3d.up")
-                                Label("\(template.taskBlueprintCount) tasks", systemImage: "checklist")
-                            }
+        SectionHeader(
+            title: "Recent 3 Days",
+            subtitle: hasSuggestions
+                ? "Review your strongest recent plans and save the ones worth reusing."
+                : "The last three days do not yet contain exportable plans, but the window stays visible so you can see what was checked."
+        )
 
-                            VStack(alignment: .leading, spacing: 6) {
-                                Label("\(template.baseBlockCount) base blocks", systemImage: "rectangle.stack")
-                                Label("\(template.totalBlockCount) total blocks", systemImage: "square.stack.3d.up")
-                                Label("\(template.taskBlueprintCount) task blueprints", systemImage: "checklist")
-                            }
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                        Button {
-                            saveSession = SaveTemplateSession(sourceDate: template.sourceDate)
-                        } label: {
-                            Label("Save as Template", systemImage: "square.and.arrow.down")
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .padding(.vertical, 4)
+        ForEach(slots) { slot in
+            if let template = slot.template {
+                SuggestedTemplateCard(template: template) {
+                    saveSession = SaveTemplateSession(sourceDate: template.sourceDate)
                 }
+            } else {
+                SuggestedTemplateEmptyCard(date: slot.date)
             }
         }
     }
 
     @ViewBuilder
     private func savedSection(model: TemplatesScreenModel) -> some View {
+        SectionHeader(
+            title: "Saved Templates",
+            subtitle: model.savedTemplates.isEmpty
+                ? "Save a suggested plan first to build your template library."
+                : "Keep each template recognizable at a glance, then decide which one should drive tomorrow."
+        )
+
         if model.savedTemplates.isEmpty {
             ContentUnavailableView(
                 "No Saved Templates",
                 systemImage: "square.stack.3d.up.slash",
                 description: Text("Save a suggested template first.")
             )
+            .frame(maxWidth: .infinity)
+            .padding(.top, 24)
         } else {
-            Section("Saved Templates") {
-                ForEach(model.savedTemplates) { template in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(template.title)
-                            .font(.headline)
-
-                        HStack {
-                            Text("\(template.totalBlockCount) blocks")
-                            Text("•")
-                            Text("\(template.taskBlueprintCount) tasks")
-                        }
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                        if !template.assignedWeekdays.isEmpty {
-                            Text(template.assignedWeekdays.map(\.shortName).joined(separator: " · "))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        ViewThatFits(in: .horizontal) {
-                            HStack {
-                                editTemplateButton(for: template)
-                                useTomorrowButton(for: template)
-                            }
-
-                            VStack(alignment: .leading, spacing: 10) {
-                                editTemplateButton(for: template)
-                                useTomorrowButton(for: template)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
+            ForEach(model.savedTemplates) { template in
+                SavedTemplateCard(
+                    template: template,
+                    isSelectedForTomorrow: model.tomorrowSchedule.finalTemplateID == template.id,
+                    onEdit: { openEditor(for: template.id) },
+                    onUseTomorrow: { store.setTomorrowOverride(templateID: template.id) }
+                )
             }
         }
     }
 
     @ViewBuilder
     private func scheduleSection(model: TemplatesScreenModel) -> some View {
-        Section("Tomorrow") {
-            TomorrowScheduleCard(schedule: model.tomorrowSchedule) {
-                store.regenerateFutureDayPlan(for: model.tomorrowSchedule.date)
-            }
+        SectionHeader(
+            title: "Tomorrow",
+            subtitle: "See the final template first, then adjust weekday rules or a one-off override."
+        )
+
+        TomorrowScheduleCard(schedule: model.tomorrowSchedule) {
+            store.regenerateFutureDayPlan(for: model.tomorrowSchedule.date)
         }
 
-        Section("Weekday Rules") {
-            ForEach(Weekday.mondayFirst) { weekday in
-                Picker(weekday.fullName, selection: Binding(
-                    get: { store.document.weekdayRules.first(where: { $0.weekday == weekday })?.savedTemplateID },
-                    set: { store.assignWeekday(weekday, to: $0) }
-                )) {
-                    Text("None").tag(UUID?.none)
-                    ForEach(store.document.savedTemplates) { template in
-                        Text(template.title).tag(UUID?.some(template.id))
+        if model.savedTemplates.isEmpty {
+            ContentUnavailableView(
+                "No Templates to Assign",
+                systemImage: "calendar.badge.exclamationmark",
+                description: Text("Save a suggested template before configuring weekday rules or a tomorrow override.")
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
+        } else {
+            WeekdayRulesCard(
+                templates: store.document.savedTemplates,
+                selectionForWeekday: weekdaySelection(for:)
+            )
+
+            TomorrowOverrideCard(
+                templates: store.document.savedTemplates,
+                selection: tomorrowOverrideSelection
+            )
+        }
+    }
+
+    private func suggestedSlots(from model: TemplatesScreenModel) -> [SuggestedTemplateSlot] {
+        let suggestionsByDate = Dictionary(uniqueKeysWithValues: model.suggestedTemplates.map { ($0.sourceDate, $0) })
+
+        return (0 ..< 3).map { offset in
+            let date = LocalDay.today().adding(days: -offset)
+            return SuggestedTemplateSlot(
+                date: date,
+                template: suggestionsByDate[date]
+            )
+        }
+    }
+
+    private func openEditor(for templateID: UUID) {
+        if let source = store.document.savedTemplates.first(where: { $0.id == templateID }) {
+            editingTemplate = source
+        }
+    }
+
+    private func weekdaySelection(for weekday: Weekday) -> Binding<UUID?> {
+        Binding(
+            get: { store.document.weekdayRules.first(where: { $0.weekday == weekday })?.savedTemplateID },
+            set: { store.assignWeekday(weekday, to: $0) }
+        )
+    }
+
+    private var tomorrowOverrideSelection: Binding<UUID?> {
+        Binding(
+            get: { store.document.overrides.first(where: { $0.date == LocalDay.today().adding(days: 1) })?.savedTemplateID },
+            set: { store.setTomorrowOverride(templateID: $0) }
+        )
+    }
+}
+
+private struct SuggestedTemplateSlot: Identifiable {
+    let date: LocalDay
+    let template: SuggestedTemplateSummary?
+
+    var id: LocalDay { date }
+}
+
+private struct SectionHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct TemplateCard<Content: View>: View {
+    var isEmphasized = false
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(uiColor: isEmphasized ? .systemBackground : .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 26, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .stroke(
+                    isEmphasized
+                        ? Color.accentColor.opacity(0.28)
+                        : Color(uiColor: .separator).opacity(0.12),
+                    lineWidth: isEmphasized ? 1.5 : 1
+                )
+        )
+    }
+}
+
+private struct SuggestedTemplateCard: View {
+    let template: SuggestedTemplateSummary
+    let onSave: () -> Void
+
+    var body: some View {
+        TemplateCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(template.sourceDate.titleText)
+                        .font(.headline)
+
+                    Text("Suggested from a recent day plan")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 12)
+
+                TemplateBadge(title: "Suggested", tint: .secondary)
+            }
+
+            TemplatePreviewRow(
+                titles: template.previewTitles,
+                totalCount: template.totalBlockCount
+            )
+
+            TemplateStatsRow(stats: [
+                .init(title: "\(template.totalBlockCount) blocks", systemImage: "square.stack.3d.up"),
+                .init(title: "\(template.taskBlueprintCount) tasks", systemImage: "checklist"),
+                .init(title: "\(template.baseBlockCount) base blocks", systemImage: "rectangle.stack")
+            ])
+
+            HStack(alignment: .center, spacing: 12) {
+                Text("Save this structure as a reusable template.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 8)
+
+                Button {
+                    onSave()
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+}
+
+private struct SuggestedTemplateEmptyCard: View {
+    let date: LocalDay
+
+    var body: some View {
+        TemplateCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(date.titleText)
+                        .font(.headline)
+
+                    Text("No exportable plan")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+
+                    Text("This day does not yet have enough reusable structure to become a suggested template.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                TemplateBadge(title: "Checked", tint: .secondary)
+            }
+        }
+    }
+}
+
+private struct SavedTemplateCard: View {
+    let template: SavedTemplateSummary
+    let isSelectedForTomorrow: Bool
+    let onEdit: () -> Void
+    let onUseTomorrow: () -> Void
+
+    var body: some View {
+        TemplateCard(isEmphasized: isSelectedForTomorrow) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(template.title)
+                        .font(.headline)
+
+                    if !template.previewTitles.isEmpty {
+                        TemplatePreviewRow(
+                            titles: template.previewTitles,
+                            totalCount: template.totalBlockCount
+                        )
+                    }
+                }
+
+                Spacer(minLength: 12)
+
+                if isSelectedForTomorrow {
+                    TemplateBadge(title: "Tomorrow", tint: .accentColor)
+                }
+            }
+
+            TemplateStatsRow(stats: [
+                .init(title: "\(template.totalBlockCount) blocks", systemImage: "square.stack.3d.up"),
+                .init(title: "\(template.taskBlueprintCount) tasks", systemImage: "checklist")
+            ])
+
+            if !template.assignedWeekdays.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Assigned Weekdays")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    TemplateChipRow(titles: template.assignedWeekdays.map(\.shortName))
+                }
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    editButton
+                    tomorrowButton
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    editButton
+                    tomorrowButton
+                }
+            }
+        }
+    }
+
+    private var editButton: some View {
+        Button("Edit", action: onEdit)
+            .buttonStyle(.bordered)
+    }
+
+    private var tomorrowButton: some View {
+        Button(isSelectedForTomorrow ? "Using Tomorrow" : "Use for Tomorrow") {
+            onUseTomorrow()
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(isSelectedForTomorrow)
+    }
+}
+
+private struct WeekdayRulesCard: View {
+    let templates: [SavedDayTemplate]
+    let selectionForWeekday: (Weekday) -> Binding<UUID?>
+
+    var body: some View {
+        TemplateCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Weekday Rules")
+                    .font(.headline)
+
+                Text("Set the default template for each weekday.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(Weekday.mondayFirst.enumerated()), id: \.element.id) { index, weekday in
+                        HStack(spacing: 12) {
+                            Text(weekday.fullName)
+                                .font(.body)
+
+                            Spacer(minLength: 12)
+
+                            Picker("", selection: selectionForWeekday(weekday)) {
+                                Text("None").tag(UUID?.none)
+                                ForEach(templates) { template in
+                                    Text(template.title).tag(UUID?.some(template.id))
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                        }
+                        .padding(.vertical, 12)
+
+                        if index != Weekday.mondayFirst.count - 1 {
+                            Divider()
+                        }
                     }
                 }
             }
         }
+    }
+}
 
-        Section("Tomorrow Override") {
-            Picker("Override Template", selection: Binding(
-                get: { store.document.overrides.first(where: { $0.date == LocalDay.today().adding(days: 1) })?.savedTemplateID },
-                set: { store.setTomorrowOverride(templateID: $0) }
-            )) {
-                Text("Use Weekday Rule").tag(UUID?.none)
-                ForEach(store.document.savedTemplates) { template in
-                    Text(template.title).tag(UUID?.some(template.id))
+private struct TomorrowOverrideCard: View {
+    let templates: [SavedDayTemplate]
+    let selection: Binding<UUID?>
+
+    var body: some View {
+        TemplateCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Tomorrow Override")
+                    .font(.headline)
+
+                Text("Use this only when tomorrow should temporarily ignore the weekday rule.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                Picker("Override Template", selection: selection) {
+                    Text("Use Weekday Rule").tag(UUID?.none)
+                    ForEach(templates) { template in
+                        Text(template.title).tag(UUID?.some(template.id))
+                    }
                 }
+                .pickerStyle(.menu)
             }
         }
-    }
-
-    private func editTemplateButton(for template: SavedTemplateSummary) -> some View {
-        Button("Edit") {
-            if let source = store.document.savedTemplates.first(where: { $0.id == template.id }) {
-                editingTemplate = source
-            }
-        }
-        .buttonStyle(.bordered)
-    }
-
-    private func useTomorrowButton(for template: SavedTemplateSummary) -> some View {
-        Button("Use for Tomorrow") {
-            store.setTomorrowOverride(templateID: template.id)
-        }
-        .buttonStyle(.borderedProminent)
     }
 }
 
@@ -281,40 +534,45 @@ private struct TomorrowScheduleCard: View {
     let onRegenerate: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(schedule.date.titleText)
-                    .font(.headline)
+        TemplateCard(isEmphasized: schedule.overrideTemplateTitle != nil) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(schedule.date.titleText)
+                        .font(.headline)
 
-                Label(schedule.weekday.fullName, systemImage: "calendar")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text("Tomorrow Uses")
-                        .font(.caption.weight(.semibold))
+                    Label(schedule.weekday.fullName, systemImage: "calendar")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-
-                    if schedule.overrideTemplateTitle != nil {
-                        Text("Override Active")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.accentColor.opacity(0.14), in: Capsule())
-                    }
                 }
 
-                Text(schedule.finalTemplateTitle ?? "None")
-                    .font(.title3.weight(.semibold))
+                Spacer(minLength: 12)
+
+                if schedule.overrideTemplateTitle != nil {
+                    TemplateBadge(title: "Override Active", tint: .accentColor)
+                }
             }
 
-            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Tomorrow Uses")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-            LabeledContent("Weekday Rule", value: schedule.weekdayTemplateTitle ?? "None")
-            LabeledContent("Override", value: schedule.overrideTemplateTitle ?? "None")
-            LabeledContent("Final", value: schedule.finalTemplateTitle ?? "None")
+                Text(schedule.finalTemplateTitle ?? "No Template Assigned")
+                    .font(.title3.weight(.semibold))
+
+                Text(schedule.overrideTemplateTitle != nil
+                    ? "A one-off override is currently taking precedence over the weekday rule."
+                    : "Tomorrow will follow the weekday rule unless you set an override.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 10) {
+                ScheduleValueRow(title: "Weekday Rule", value: schedule.weekdayTemplateTitle ?? "None")
+                ScheduleValueRow(title: "Override", value: schedule.overrideTemplateTitle ?? "None")
+                ScheduleValueRow(title: "Final", value: schedule.finalTemplateTitle ?? "None")
+            }
 
             Button {
                 onRegenerate()
@@ -322,9 +580,139 @@ private struct TomorrowScheduleCard: View {
                 Label("Regenerate Tomorrow Plan", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.bordered)
-            .padding(.top, 2)
         }
-        .padding(.vertical, 4)
+    }
+}
+
+private struct ScheduleValueRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 12)
+
+            Text(value)
+                .font(.subheadline)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+}
+
+private struct TemplateStatsRow: View {
+    let stats: [TemplateStat]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                ForEach(stats) { stat in
+                    TemplateBadge(title: stat.title, systemImage: stat.systemImage, tint: .secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(stats) { stat in
+                    TemplateBadge(title: stat.title, systemImage: stat.systemImage, tint: .secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct TemplateStat: Identifiable {
+    let id = UUID()
+    let title: String
+    let systemImage: String
+}
+
+private struct TemplatePreviewRow: View {
+    let titles: [String]
+    let totalCount: Int
+
+    private var hiddenCount: Int {
+        max(totalCount - titles.count, 0)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Preview")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    previewChips
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    previewChips
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var previewChips: some View {
+        ForEach(titles, id: \.self) { title in
+            TemplateBadge(title: title, tint: .primary, isSoft: false)
+        }
+
+        if hiddenCount > 0 {
+            TemplateBadge(title: "+\(hiddenCount) more", tint: .secondary)
+        }
+    }
+}
+
+private struct TemplateChipRow: View {
+    let titles: [String]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                chips
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                chips
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var chips: some View {
+        ForEach(titles, id: \.self) { title in
+            TemplateBadge(title: title, tint: .accentColor)
+        }
+    }
+}
+
+private struct TemplateBadge: View {
+    let title: String
+    var systemImage: String? = nil
+    var tint: Color
+    var isSoft = true
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .imageScale(.small)
+            }
+
+            Text(title)
+        }
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            tint.opacity(isSoft ? 0.12 : 0.08),
+            in: Capsule()
+        )
     }
 }
 
@@ -348,6 +736,32 @@ private struct TomorrowScheduleCard: View {
         .environment(PreviewSupport.store(tab: .templates, loaded: false))
 }
 
+#Preview("Suggested Template Card") {
+    SuggestedTemplateCard(
+        template: PreviewSupport.templatesModel().suggestedTemplates.first!
+    ) {
+    }
+    .padding()
+    .background(Color(uiColor: .systemGroupedBackground))
+}
+
+#Preview("Suggested Template Empty Card") {
+    SuggestedTemplateEmptyCard(date: PreviewSupport.referenceDay.adding(days: -1))
+        .padding()
+        .background(Color(uiColor: .systemGroupedBackground))
+}
+
+#Preview("Saved Template Card") {
+    SavedTemplateCard(
+        template: PreviewSupport.templatesModel().savedTemplates.first!,
+        isSelectedForTomorrow: true,
+        onEdit: {},
+        onUseTomorrow: {}
+    )
+    .padding()
+    .background(Color(uiColor: .systemGroupedBackground))
+}
+
 #Preview("Save Template Sheet") {
     SaveTemplateSheet(sourceDate: PreviewSupport.referenceDay) { _ in }
 }
@@ -356,6 +770,7 @@ private struct TomorrowScheduleCard: View {
     TomorrowScheduleCard(schedule: PreviewSupport.templatesModel().tomorrowSchedule) {
     }
     .padding()
+    .background(Color(uiColor: .systemGroupedBackground))
 }
 
 #Preview("Tomorrow Schedule Card - Override") {
@@ -373,4 +788,25 @@ private struct TomorrowScheduleCard: View {
     ) {
     }
     .padding()
+    .background(Color(uiColor: .systemGroupedBackground))
+}
+
+#Preview("Weekday Rules Card") {
+    WeekdayRulesCard(
+        templates: PreviewSupport.seededDocument().savedTemplates,
+        selectionForWeekday: { _ in
+            .constant(PreviewSupport.seededDocument().savedTemplates.first?.id)
+        }
+    )
+    .padding()
+    .background(Color(uiColor: .systemGroupedBackground))
+}
+
+#Preview("Tomorrow Override Card") {
+    TomorrowOverrideCard(
+        templates: PreviewSupport.seededDocument().savedTemplates,
+        selection: .constant(PreviewSupport.seededDocument().savedTemplates.last?.id)
+    )
+    .padding()
+    .background(Color(uiColor: .systemGroupedBackground))
 }

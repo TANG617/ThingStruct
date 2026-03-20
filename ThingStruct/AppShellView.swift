@@ -25,6 +25,11 @@ struct AppShellView: View {
                 }
                 .tag(RootTab.templates)
         }
+        .onChange(of: store.selectedTab) { _, _ in
+            if store.selectedBlockID != nil {
+                store.selectBlock(nil)
+            }
+        }
         .alert(
             "Unable to Complete Action",
             isPresented: Binding(

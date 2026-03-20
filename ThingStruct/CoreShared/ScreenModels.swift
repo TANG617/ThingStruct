@@ -88,6 +88,7 @@ public struct SavedTemplateSummary: Identifiable, Equatable, Sendable {
     public var totalBlockCount: Int
     public var taskBlueprintCount: Int
     public var assignedWeekdays: [Weekday]
+    public var previewTitles: [String]
 }
 
 public struct TomorrowScheduleSummary: Equatable, Sendable {
@@ -258,7 +259,8 @@ public enum ThingStructPresentation {
                 assignedWeekdays: document.weekdayRules
                     .filter { $0.savedTemplateID == template.id }
                     .map(\.weekday)
-                    .sorted(by: { $0.rawValue < $1.rawValue })
+                    .sorted(by: { $0.rawValue < $1.rawValue }),
+                previewTitles: Array(template.blocks.map(\.title).prefix(3))
             )
         }
         .sorted { lhs, rhs in

@@ -19,20 +19,29 @@ struct TodayRootView: View {
 
                     switch result {
                     case let .success(model):
-                        let effectiveSelectedBlockID = store.selectedBlockID ?? model.initialFocusBlockID
                         let currentMinute = store.selectedDate == LocalDay.today() ? store.minuteOfDay(for: .now) : nil
                         let currentActiveBlockID = store.selectedDate == LocalDay.today() ? store.currentActiveBlockID() : nil
 
                         TodayTimelineView(
                             model: model,
-                            selectedBlockID: effectiveSelectedBlockID,
+                            selectedBlockID: store.selectedBlockID,
                             currentMinute: currentMinute,
                             currentActiveBlockID: currentActiveBlockID,
                             jumpToCurrentTrigger: jumpToCurrentTrigger,
+                            timingResolver: { blockID in
+                                store.persistedBlock(on: store.selectedDate, blockID: blockID)?.timing
+                            },
                             resizeBounds: { blockID in
                                 store.resizeBounds(on: store.selectedDate, blockID: blockID)
                             },
-                            onResizeBlock: { blockID, proposedEndMinuteOfDay in
+                            onResizeBlockStart: { blockID, proposedStartMinuteOfDay in
+                                store.resizeBlockStart(
+                                    on: store.selectedDate,
+                                    blockID: blockID,
+                                    proposedStartMinuteOfDay: proposedStartMinuteOfDay
+                                )
+                            },
+                            onResizeBlockEnd: { blockID, proposedEndMinuteOfDay in
                                 store.resizeBlockEnd(
                                     on: store.selectedDate,
                                     blockID: blockID,
@@ -119,11 +128,9 @@ struct TodayRootView: View {
         }
         .task(id: store.selectedDate) {
             store.ensureMaterialized(for: store.selectedDate)
-            guard store.selectedBlockID == nil else { return }
-
-            if let model = try? store.todayScreenModel() {
-                store.selectBlock(model.initialFocusBlockID)
-            }
+        }
+        .onAppear {
+            store.selectBlock(nil)
         }
     }
 
@@ -165,8 +172,10 @@ private struct TodayTimelineView: View {
     let currentMinute: Int?
     let currentActiveBlockID: UUID?
     let jumpToCurrentTrigger: Int
+    let timingResolver: (UUID) -> TimeBlockTiming?
     let resizeBounds: (UUID) -> BlockResizeBounds?
-    let onResizeBlock: (UUID, Int) -> Void
+    let onResizeBlockStart: (UUID, Int) -> Void
+    let onResizeBlockEnd: (UUID, Int) -> Void
     let onSelect: (UUID?) -> Void
 
     @State private var lastInitialScrollDate: LocalDay?
@@ -267,7 +276,10 @@ private struct TodayTimelineView: View {
     }
 
     private func timelineBlock(_ node: TodayTimelineNode, canvasWidth: CGFloat) -> some View {
-        let y = yPosition(for: node.block.startMinuteOfDay)
+        let startDelta = propagatedStartDelta(for: node.block, inheritedStartDelta: 0)
+        let displayedStartMinuteOfDay = displayedStartMinute(for: node.block, startDelta: startDelta)
+        let displayedEndMinuteOfDay = displayedEndMinute(for: node.block, startDelta: startDelta)
+        let y = yPosition(for: displayedStartMinuteOfDay)
         let blockWidth = max(0, canvasWidth - labelWidth - trackInset * 2)
 
         return TimelineBlockCard(
@@ -275,12 +287,16 @@ private struct TodayTimelineView: View {
             hourHeight: hourHeight,
             selectedBlockID: selectedBlockID,
             selectedPathIDs: selectedPathIDs,
-            displayedEndMinuteOfDay: displayedEndMinute(for: node.block),
-            endMinuteResolver: displayedEndMinute(for:),
+            displayedStartMinuteOfDay: displayedStartMinuteOfDay,
+            displayedEndMinuteOfDay: displayedEndMinuteOfDay,
+            inheritedStartDelta: startDelta,
+            timingResolver: timingResolver,
             resizingBlockID: resizePreview?.blockID,
-            onResizeStart: beginResize(for:),
-            onResizeChange: updateResizePreview(for:verticalTranslation:),
-            onResizeEnd: commitResize(for:),
+            resizingEdge: resizePreview?.edge,
+            resizePreview: resizePreview,
+            onResizeStart: beginResize(for:edge:),
+            onResizeChange: updateResizePreview(for:edge:verticalTranslation:),
+            onResizeEnd: commitResize(for:edge:),
             onSelect: onSelect
         )
         .frame(width: blockWidth, alignment: .leading)
@@ -390,45 +406,105 @@ private struct TodayTimelineView: View {
         return lhs.id.uuidString < rhs.id.uuidString
     }
 
-    private func displayedEndMinute(for block: TimelineBlockItem) -> Int {
-        resizePreview?.blockID == block.id ? resizePreview?.proposedEndMinuteOfDay ?? block.endMinuteOfDay : block.endMinuteOfDay
+    private func propagatedStartDelta(for block: TimelineBlockItem, inheritedStartDelta: Int) -> Int {
+        if let resizePreview, resizePreview.blockID == block.id, resizePreview.edge == .start {
+            return resizePreview.proposedStartMinuteOfDay - resizePreview.currentStartMinuteOfDay
+        }
+
+        guard inheritedStartDelta != 0 else {
+            return 0
+        }
+
+        guard case .relative? = timingResolver(block.id) else {
+            return 0
+        }
+
+        return inheritedStartDelta
     }
 
-    private func beginResize(for blockID: UUID) {
-        guard resizePreview?.blockID != blockID else { return }
+    private func displayedStartMinute(for block: TimelineBlockItem, startDelta: Int) -> Int {
+        if let resizePreview, resizePreview.blockID == block.id {
+            return resizePreview.proposedStartMinuteOfDay
+        }
+
+        return block.startMinuteOfDay + startDelta
+    }
+
+    private func displayedEndMinute(for block: TimelineBlockItem, startDelta: Int) -> Int {
+        if let resizePreview, resizePreview.blockID == block.id {
+            return resizePreview.proposedEndMinuteOfDay
+        }
+
+        return block.endMinuteOfDay + startDelta
+    }
+
+    private func beginResize(for blockID: UUID, edge: TimelineResizeEdge) {
+        guard resizePreview?.blockID != blockID || resizePreview?.edge != edge else { return }
         guard let bounds = resizeBounds(blockID) else { return }
 
         resizePreview = TimelineResizePreview(
             blockID: blockID,
+            edge: edge,
+            currentStartMinuteOfDay: bounds.startMinuteOfDay,
             currentEndMinuteOfDay: bounds.endMinuteOfDay,
+            minimumStartMinuteOfDay: bounds.minimumStartMinuteOfDay,
+            maximumStartMinuteOfDay: bounds.maximumStartMinuteOfDay,
             minimumEndMinuteOfDay: bounds.minimumEndMinuteOfDay,
             maximumEndMinuteOfDay: bounds.maximumEndMinuteOfDay,
+            proposedStartMinuteOfDay: bounds.startMinuteOfDay,
             proposedEndMinuteOfDay: bounds.endMinuteOfDay
         )
     }
 
-    private func updateResizePreview(for blockID: UUID, verticalTranslation: CGFloat) {
-        guard var resizePreview, resizePreview.blockID == blockID else { return }
+    private func updateResizePreview(for blockID: UUID, edge: TimelineResizeEdge, verticalTranslation: CGFloat) {
+        guard var resizePreview, resizePreview.blockID == blockID, resizePreview.edge == edge else { return }
 
         let deltaMinutes = Int((verticalTranslation / hourHeight) * 60.0)
-        let proposedEndMinuteOfDay = resizePreview.currentEndMinuteOfDay + deltaMinutes
-        resizePreview.proposedEndMinuteOfDay = proposedEndMinuteOfDay.aligned(
-            toStep: 5,
-            within: resizePreview.minimumEndMinuteOfDay ... resizePreview.maximumEndMinuteOfDay
-        ) ?? resizePreview.proposedEndMinuteOfDay
+
+        switch edge {
+        case .start:
+            let proposedStartMinuteOfDay = resizePreview.currentStartMinuteOfDay + deltaMinutes
+            resizePreview.proposedStartMinuteOfDay = proposedStartMinuteOfDay.aligned(
+                toStep: 5,
+                within: resizePreview.minimumStartMinuteOfDay ... resizePreview.maximumStartMinuteOfDay
+            ) ?? resizePreview.proposedStartMinuteOfDay
+
+        case .end:
+            let proposedEndMinuteOfDay = resizePreview.currentEndMinuteOfDay + deltaMinutes
+            resizePreview.proposedEndMinuteOfDay = proposedEndMinuteOfDay.aligned(
+                toStep: 5,
+                within: resizePreview.minimumEndMinuteOfDay ... resizePreview.maximumEndMinuteOfDay
+            ) ?? resizePreview.proposedEndMinuteOfDay
+        }
+
         self.resizePreview = resizePreview
     }
 
-    private func commitResize(for blockID: UUID) {
-        guard let resizePreview, resizePreview.blockID == blockID else { return }
+    private func commitResize(for blockID: UUID, edge: TimelineResizeEdge) {
+        guard let resizePreview, resizePreview.blockID == blockID, resizePreview.edge == edge else { return }
         defer { self.resizePreview = nil }
 
-        guard resizePreview.proposedEndMinuteOfDay != resizePreview.currentEndMinuteOfDay else {
-            return
-        }
+        switch edge {
+        case .start:
+            guard resizePreview.proposedStartMinuteOfDay != resizePreview.currentStartMinuteOfDay else {
+                return
+            }
 
-        onResizeBlock(blockID, resizePreview.proposedEndMinuteOfDay)
+            onResizeBlockStart(blockID, resizePreview.proposedStartMinuteOfDay)
+
+        case .end:
+            guard resizePreview.proposedEndMinuteOfDay != resizePreview.currentEndMinuteOfDay else {
+                return
+            }
+
+            onResizeBlockEnd(blockID, resizePreview.proposedEndMinuteOfDay)
+        }
     }
+}
+
+private enum TimelineResizeEdge {
+    case start
+    case end
 }
 
 private struct TodayTimelineNode: Identifiable {
@@ -440,9 +516,14 @@ private struct TodayTimelineNode: Identifiable {
 
 private struct TimelineResizePreview {
     let blockID: UUID
+    let edge: TimelineResizeEdge
+    let currentStartMinuteOfDay: Int
     let currentEndMinuteOfDay: Int
+    let minimumStartMinuteOfDay: Int
+    let maximumStartMinuteOfDay: Int
     let minimumEndMinuteOfDay: Int
     let maximumEndMinuteOfDay: Int
+    var proposedStartMinuteOfDay: Int
     var proposedEndMinuteOfDay: Int
 }
 
@@ -451,12 +532,16 @@ private struct TimelineBlockCard: View {
     let hourHeight: CGFloat
     let selectedBlockID: UUID?
     let selectedPathIDs: Set<UUID>
+    let displayedStartMinuteOfDay: Int
     let displayedEndMinuteOfDay: Int
-    let endMinuteResolver: (TimelineBlockItem) -> Int
+    let inheritedStartDelta: Int
+    let timingResolver: (UUID) -> TimeBlockTiming?
     let resizingBlockID: UUID?
-    let onResizeStart: (UUID) -> Void
-    let onResizeChange: (UUID, CGFloat) -> Void
-    let onResizeEnd: (UUID) -> Void
+    let resizingEdge: TimelineResizeEdge?
+    let resizePreview: TimelineResizePreview?
+    let onResizeStart: (UUID, TimelineResizeEdge) -> Void
+    let onResizeChange: (UUID, TimelineResizeEdge, CGFloat) -> Void
+    let onResizeEnd: (UUID, TimelineResizeEdge) -> Void
     let onSelect: (UUID?) -> Void
 
     private let minimumHeight: CGFloat = 52
@@ -481,8 +566,24 @@ private struct TimelineBlockCard: View {
         resizingBlockID == block.id
     }
 
+    private var nodeStartDelta: Int {
+        if let resizePreview, resizePreview.blockID == block.id, resizePreview.edge == .start {
+            return resizePreview.proposedStartMinuteOfDay - resizePreview.currentStartMinuteOfDay
+        }
+
+        guard inheritedStartDelta != 0 else {
+            return 0
+        }
+
+        guard case .relative? = timingResolver(block.id) else {
+            return 0
+        }
+
+        return inheritedStartDelta
+    }
+
     private var cardHeight: CGFloat {
-        max(CGFloat(displayedEndMinuteOfDay - block.startMinuteOfDay) / 60.0 * hourHeight, minimumHeight)
+        max(CGFloat(displayedEndMinuteOfDay - displayedStartMinuteOfDay) / 60.0 * hourHeight, minimumHeight)
     }
 
     private var badgeTitle: String {
@@ -528,7 +629,7 @@ private struct TimelineBlockCard: View {
             }
 
             if !block.isBlank {
-                Text("\(block.startMinuteOfDay.formattedTime) - \(displayedEndMinuteOfDay.formattedTime)")
+                Text("\(displayedStartMinuteOfDay.formattedTime) - \(displayedEndMinuteOfDay.formattedTime)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -566,29 +667,11 @@ private struct TimelineBlockCard: View {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(backgroundColor)
 
-                ForEach(node.children) { child in
-                    let childDisplayedEndMinuteOfDay = endMinuteResolver(child.block)
-                    let childHeight = max(
-                        CGFloat(childDisplayedEndMinuteOfDay - child.block.startMinuteOfDay) / 60.0 * hourHeight,
-                        minimumHeight
-                    )
-                    TimelineBlockCard(
-                        node: child,
-                        hourHeight: hourHeight,
-                        selectedBlockID: selectedBlockID,
-                        selectedPathIDs: selectedPathIDs,
-                        displayedEndMinuteOfDay: childDisplayedEndMinuteOfDay,
-                        endMinuteResolver: endMinuteResolver,
-                        resizingBlockID: resizingBlockID,
-                        onResizeStart: onResizeStart,
-                        onResizeChange: onResizeChange,
-                        onResizeEnd: onResizeEnd,
-                        onSelect: onSelect
-                    )
-                    .frame(width: childWidth)
-                    .offset(
-                        x: childHorizontalInset,
-                        y: childYOffset(for: child, childHeight: childHeight)
+                ForEach(Array(node.children), id: \.id) { child in
+                    childCard(
+                        for: child,
+                        width: childWidth,
+                        horizontalInset: childHorizontalInset
                     )
                 }
 
@@ -597,8 +680,10 @@ private struct TimelineBlockCard: View {
 
                 if !block.isBlank {
                     VStack {
+                        resizeHandle(edge: .start)
+                            .padding(.top, 8)
                         Spacer(minLength: 0)
-                        resizeHandle
+                        resizeHandle(edge: .end)
                     }
                     .padding(.bottom, 8)
                     .zIndex(2)
@@ -674,41 +759,103 @@ private struct TimelineBlockCard: View {
     }
 
     private func childYOffset(for child: TodayTimelineNode, childHeight: CGFloat) -> CGFloat {
-        let relative = CGFloat(child.block.startMinuteOfDay - block.startMinuteOfDay) / 60.0 * hourHeight
+        let displayedChildStartMinuteOfDay = childDisplayedStartMinute(of: child)
+        let relative = CGFloat(displayedChildStartMinuteOfDay - displayedStartMinuteOfDay) / 60.0 * hourHeight
         let desiredTop = headerReservedHeight + childGap
         let availableShift = max(0, cardHeight - childHeight - childGap - relative)
         let shift = min(max(0, desiredTop - relative), availableShift)
         return relative + shift
     }
 
-    private var resizeHandle: some View {
+    @ViewBuilder
+    private func childCard(
+        for child: TodayTimelineNode,
+        width: CGFloat,
+        horizontalInset: CGFloat
+    ) -> some View {
+        let childDisplayedStartMinuteOfDay = childDisplayedStartMinute(of: child)
+        let childDisplayedEndMinuteOfDay = childDisplayedEndMinute(of: child)
+        let childHeight = max(
+            CGFloat(childDisplayedEndMinuteOfDay - childDisplayedStartMinuteOfDay) / 60.0 * hourHeight,
+            minimumHeight
+        )
+
+        TimelineBlockCard(
+            node: child,
+            hourHeight: hourHeight,
+            selectedBlockID: selectedBlockID,
+            selectedPathIDs: selectedPathIDs,
+            displayedStartMinuteOfDay: childDisplayedStartMinuteOfDay,
+            displayedEndMinuteOfDay: childDisplayedEndMinuteOfDay,
+            inheritedStartDelta: nodeStartDelta,
+            timingResolver: timingResolver,
+            resizingBlockID: resizingBlockID,
+            resizingEdge: resizingEdge,
+            resizePreview: resizePreview,
+            onResizeStart: onResizeStart,
+            onResizeChange: onResizeChange,
+            onResizeEnd: onResizeEnd,
+            onSelect: onSelect
+        )
+        .frame(width: width)
+        .offset(
+            x: horizontalInset,
+            y: childYOffset(for: child, childHeight: childHeight)
+        )
+    }
+
+    private func childDisplayedStartMinute(of child: TodayTimelineNode) -> Int {
+        child.block.startMinuteOfDay + childStartDelta(for: child)
+    }
+
+    private func childDisplayedEndMinute(of child: TodayTimelineNode) -> Int {
+        if let resizePreview, resizePreview.blockID == child.block.id {
+            return resizePreview.proposedEndMinuteOfDay
+        }
+
+        return child.block.endMinuteOfDay + childStartDelta(for: child)
+    }
+
+    private func childStartDelta(for child: TodayTimelineNode) -> Int {
+        if let resizePreview, resizePreview.blockID == child.block.id, resizePreview.edge == .start {
+            return resizePreview.proposedStartMinuteOfDay - resizePreview.currentStartMinuteOfDay
+        }
+
+        if nodeStartDelta != 0, case .relative? = timingResolver(child.block.id) {
+            return nodeStartDelta
+        }
+
+        return 0
+    }
+
+    private func resizeHandle(edge: TimelineResizeEdge) -> some View {
         RoundedRectangle(cornerRadius: 999, style: .continuous)
-            .fill(isResizing ? style.accent : style.marker.opacity(0.82))
-            .frame(width: isResizing ? 44 : 32, height: 5)
+            .fill(isResizing && resizingEdge == edge ? style.accent : style.marker.opacity(0.82))
+            .frame(width: isResizing && resizingEdge == edge ? 44 : 32, height: 5)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
-            .highPriorityGesture(resizeGesture)
-            .accessibilityLabel("Resize block")
+            .highPriorityGesture(resizeGesture(edge: edge))
+            .accessibilityLabel(edge == .start ? "Resize block start" : "Resize block end")
     }
 
-    private var resizeGesture: some Gesture {
+    private func resizeGesture(edge: TimelineResizeEdge) -> some Gesture {
         LongPressGesture(minimumDuration: 0.35)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .onChanged { value in
                 switch value {
                 case .first(true):
-                    onResizeStart(block.id)
+                    onResizeStart(block.id, edge)
 
                 case .second(true, let drag?):
-                    onResizeChange(block.id, drag.translation.height)
+                    onResizeChange(block.id, edge, drag.translation.height)
 
                 default:
                     break
                 }
             }
             .onEnded { _ in
-                onResizeEnd(block.id)
+                onResizeEnd(block.id, edge)
             }
     }
 }
@@ -738,7 +885,7 @@ private struct TodayBlockDetailSheet: View {
                 Color.clear
             }
         }
-        .presentationDetents([.height(272), .medium, .large])
+        .presentationDetents([.height(272), .medium])
         .presentationDragIndicator(.visible)
         .presentationContentInteraction(.scrolls)
         .sheet(item: $editorSession) { session in
@@ -974,8 +1121,10 @@ private struct BlockEditorSession: Identifiable {
         currentMinute: 9 * 60 + 30,
         currentActiveBlockID: model.selectedBlock?.id,
         jumpToCurrentTrigger: 0,
+        timingResolver: { _ in nil },
         resizeBounds: { _ in nil },
-        onResizeBlock: { _, _ in },
+        onResizeBlockStart: { _, _ in },
+        onResizeBlockEnd: { _, _ in },
         onSelect: { _ in }
     )
 }
@@ -988,8 +1137,10 @@ private struct BlockEditorSession: Identifiable {
         currentMinute: nil,
         currentActiveBlockID: nil,
         jumpToCurrentTrigger: 0,
+        timingResolver: { _ in nil },
         resizeBounds: { _ in nil },
-        onResizeBlock: { _, _ in },
+        onResizeBlockStart: { _, _ in },
+        onResizeBlockEnd: { _, _ in },
         onSelect: { _ in }
     )
 }
@@ -1009,8 +1160,10 @@ private struct BlockEditorSession: Identifiable {
         currentMinute: nil,
         currentActiveBlockID: nil,
         jumpToCurrentTrigger: 0,
+        timingResolver: { _ in nil },
         resizeBounds: { _ in nil },
-        onResizeBlock: { _, _ in },
+        onResizeBlockStart: { _, _ in },
+        onResizeBlockEnd: { _, _ in },
         onSelect: { _ in }
     )
 }
