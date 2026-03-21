@@ -1,5 +1,10 @@
 import SwiftUI
 
+// The editor does not write directly into domain models while the user types.
+// Instead it edits a `BlockDraft`, which acts like a temporary form state object.
+//
+// This pattern is very common in UI code because a partially typed form may be
+// invalid or incomplete, while domain models usually want stronger invariants.
 enum BlockDraftMode: Equatable {
     case createBase
     case createOverlay(parentBlockID: UUID, layerIndex: Int)
@@ -27,6 +32,8 @@ struct BlockDraft: Equatable {
     var tasks: [TaskItem]
 
     private var snappedAbsoluteStartMinuteOfDay: Int {
+        // The draft can temporarily hold arbitrary values from UI controls;
+        // these computed properties normalize the values before we build a real block.
         absoluteStartMinuteOfDay.snapped(toStep: 5, within: 0 ... (24 * 60 - 5))
     }
 
@@ -47,6 +54,7 @@ struct BlockDraft: Equatable {
     }
 
     func makeBlock(dayPlanID: UUID) -> TimeBlock {
+        // This is the "commit" boundary from form state into domain state.
         TimeBlock(
             dayPlanID: dayPlanID,
             layerIndex: 0,
@@ -84,6 +92,7 @@ struct BlockDraft: Equatable {
 
 extension BlockDraft {
     static func base(startMinute: Int = 540, endMinute: Int = 600) -> BlockDraft {
+        // Factory helpers keep view code from having to know all draft defaults.
         BlockDraft(
             mode: .createBase,
             title: "",
@@ -119,6 +128,7 @@ extension BlockDraft {
     }
 
     static func editing(detail: BlockDetailModel, sourceBlock: TimeBlock) -> BlockDraft {
+        // Converting a stored block into a mutable draft is the inverse of `makeBlock`.
         let timingMode: BlockTimingDraftMode
         let absoluteStart: Int
         let absoluteEnd: Int
@@ -224,6 +234,8 @@ struct BlockEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let title: String
+    // The sheet owns a temporary draft so text entry can be incomplete/invalid
+    // without mutating the persisted block immediately.
     @State var draft: BlockDraft
     let onSave: (BlockDraft) -> Void
     var onCancelBlock: (() -> Void)? = nil
@@ -232,6 +244,7 @@ struct BlockEditorSheet: View {
 
     var body: some View {
         NavigationStack {
+            // `Form` provides the standard grouped editor appearance on iOS.
             Form {
                 Section("Details") {
                     TextField("Title", text: $draft.title)
@@ -240,6 +253,7 @@ struct BlockEditorSheet: View {
                 }
 
                 Section("Timing") {
+                    // A segmented picker works well for small enums like timing mode.
                     Picker("Mode", selection: $draft.timingMode) {
                         ForEach(BlockTimingDraftMode.allCases) { mode in
                             Text(mode.rawValue.capitalized).tag(mode)
@@ -248,6 +262,8 @@ struct BlockEditorSheet: View {
                     .pickerStyle(.segmented)
 
                     if draft.timingMode == .absolute {
+                        // The storage format is `Int` minutes, but the native control is a
+                        // `DatePicker`, so `MinutePickerRow` handles that conversion.
                         MinutePickerRow(
                             title: "Start",
                             minuteOfDay: $draft.absoluteStartMinuteOfDay,
@@ -262,6 +278,8 @@ struct BlockEditorSheet: View {
                             )
                         }
                     } else {
+                        // Relative overlays are edited as offsets/durations because their
+                        // actual wall-clock position depends on the parent block.
                         Stepper("Offset: \(draft.relativeOffsetMinutes) min", value: $draft.relativeOffsetMinutes, in: 0 ... 720, step: 5)
                         Toggle("Duration", isOn: $draft.hasRelativeDuration)
                         if draft.hasRelativeDuration {
@@ -277,6 +295,8 @@ struct BlockEditorSheet: View {
                     }
 
                     ForEach($draft.tasks) { $task in
+                        // Iterating over bindings gives each row direct write-back access
+                        // into the parent array element.
                         TextField("Task", text: $task.title)
                     }
                     .onDelete { offsets in
@@ -336,6 +356,7 @@ struct BlockEditorSheet: View {
 
 private struct MinutePickerRow: View {
     let title: String
+    // `@Binding` means this row edits state owned by its parent view.
     @Binding var minuteOfDay: Int
     let validRange: ClosedRange<Int>
 
@@ -343,6 +364,7 @@ private struct MinutePickerRow: View {
         DatePicker(
             title,
             selection: Binding(
+                // Adapt `Binding<Int>` to the `Binding<Date>` API expected by `DatePicker`.
                 get: { date(for: minuteOfDay) },
                 set: { minuteOfDay = minuteOfDay(from: $0).snapped(toStep: 5, within: validRange) }
             ),
@@ -351,6 +373,7 @@ private struct MinutePickerRow: View {
     }
 
     private func date(for minuteOfDay: Int) -> Date {
+        // The concrete day is arbitrary; we only need a stable same-day reference point.
         Calendar.current.date(
             byAdding: .minute,
             value: minuteOfDay,
@@ -359,6 +382,7 @@ private struct MinutePickerRow: View {
     }
 
     private func minuteOfDay(from date: Date) -> Int {
+        // Convert the picker output back into the engine's simpler minute-of-day format.
         Calendar.current.dateComponents([.minute], from: referenceDate, to: date).minute ?? 0
     }
 

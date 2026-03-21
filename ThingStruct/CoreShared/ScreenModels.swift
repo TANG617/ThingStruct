@@ -1,5 +1,13 @@
 import Foundation
 
+// The presentation layer converts domain models into view-friendly screen models.
+//
+// This file is intentionally separate from SwiftUI code:
+// - it keeps layout-free transformation logic testable
+// - views can stay focused on rendering
+// - the store can ask for fully prepared screen data
+
+// `Now` screen models.
 public struct NowChainItem: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var title: String
@@ -40,6 +48,7 @@ public struct NowScreenModel: Equatable, Sendable {
     public var taskSections: [NowTaskSection]
 }
 
+// `Today` screen models.
 public struct TimelineBlockItem: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var parentBlockID: UUID?
@@ -52,7 +61,7 @@ public struct TimelineBlockItem: Identifiable, Equatable, Sendable {
     public var incompleteTaskCount: Int
 }
 
-public struct BlockDetailModel: Equatable, Sendable {
+public struct BlockDetailModel: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var title: String
     public var note: String?
@@ -73,6 +82,7 @@ public struct TodayScreenModel: Equatable, Sendable {
     public var initialFocusBlockID: UUID?
 }
 
+// `Templates` screen models.
 public struct SuggestedTemplateSummary: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var sourceDate: LocalDay
@@ -108,12 +118,15 @@ public struct TemplatesScreenModel: Equatable, Sendable {
     public var tomorrowSchedule: TomorrowScheduleSummary
 }
 
+// `ThingStructPresentation` is a pure mapper from domain state to UI state.
+// It should not perform persistence or mutate the document.
 public enum ThingStructPresentation {
     public static func nowScreenModel(
         document: ThingStructDocument,
         date: LocalDay,
         minuteOfDay: Int
     ) throws -> NowScreenModel {
+        // `Now` is all about the currently active chain of blocks at a single minute.
         let plan = document.dayPlan(for: date) ?? DayPlan(date: date)
         let selection = try DayPlanEngine.activeSelection(in: plan, at: minuteOfDay)
         let sortedChain = selection.chain.sorted(by: nowChainSort)
@@ -158,6 +171,8 @@ public enum ThingStructPresentation {
         selectedBlockID: UUID?,
         currentMinute: Int?
     ) throws -> TodayScreenModel {
+        // `Today` needs runtime blank blocks, so it asks for `runtimeResolved`
+        // rather than the plain persisted plan.
         let runtimePlan = try DayPlanEngine.runtimeResolved(document.dayPlan(for: date) ?? DayPlan(date: date))
         let sortedBlocks = runtimePlan.blocks
             .filter { !$0.isCancelled }
@@ -189,6 +204,9 @@ public enum ThingStructPresentation {
             }
             .sorted(by: timelineSort)
 
+        // Focus selection is a presentation decision:
+        // explicit user selection wins, otherwise prefer the current active block,
+        // otherwise fall back to the first real block.
         let focusedBlockID: UUID?
         if let selectedBlockID {
             focusedBlockID = selectedBlockID
@@ -284,6 +302,8 @@ public enum ThingStructPresentation {
     }
 
     private nonisolated static func detailModel(for block: TimeBlock, allBlocks: [TimeBlock]) -> BlockDetailModel? {
+        // Views consume this richer display model so they do not need to know how to
+        // find parent titles, snap times, or sort tasks themselves.
         guard
             let start = block.resolvedStartMinuteOfDay,
             let end = block.resolvedEndMinuteOfDay
@@ -320,6 +340,7 @@ private nonisolated func makeNowChainItems(
     from chain: [TimeBlock],
     activeBlockID: UUID?
 ) -> [NowChainItem] {
+    // `nonisolated` here means this helper is just a pure mapper with no actor-bound state.
     chain.compactMap { block in
         guard
             let start = block.resolvedStartMinuteOfDay,
@@ -345,6 +366,7 @@ private nonisolated func makeNowNoteSections(
     from chain: [TimeBlock],
     activeBlockID: UUID?
 ) -> [NowNoteSection] {
+    // Notes become their own UI sections even though they originate from the same blocks.
     chain.compactMap { block in
         guard let note = normalizedNoteText(block.note) else {
             return nil
@@ -365,6 +387,7 @@ private nonisolated func makeNowTaskSections(
     from chain: [TimeBlock],
     activeBlockID: UUID?
 ) -> [NowTaskSection] {
+    // Empty task lists simply do not appear in the Now tasks area.
     chain.filter { !$0.tasks.isEmpty }.compactMap { block in
         makeNowTaskSection(from: block, activeBlockID: activeBlockID)
     }
@@ -394,6 +417,7 @@ private nonisolated func makeNowTaskSection(
 }
 
 private nonisolated func normalizedNoteText(_ note: String?) -> String? {
+    // Domain models often allow nil and empty-string separately; the UI usually does not care.
     guard let note else {
         return nil
     }
@@ -403,6 +427,7 @@ private nonisolated func normalizedNoteText(_ note: String?) -> String? {
 }
 
 private nonisolated func taskSort(_ lhs: TaskItem, _ rhs: TaskItem) -> Bool {
+    // Explicit user order wins; UUID only provides a stable tie-breaker.
     if lhs.order != rhs.order {
         return lhs.order < rhs.order
     }
@@ -410,6 +435,7 @@ private nonisolated func taskSort(_ lhs: TaskItem, _ rhs: TaskItem) -> Bool {
 }
 
 private nonisolated func nowChainSort(_ lhs: TimeBlock, _ rhs: TimeBlock) -> Bool {
+    // Higher layer first matches the Now screen's "top overlay is most important" rule.
     if lhs.layerIndex != rhs.layerIndex {
         return lhs.layerIndex > rhs.layerIndex
     }
@@ -422,6 +448,7 @@ private nonisolated func nowChainSort(_ lhs: TimeBlock, _ rhs: TimeBlock) -> Boo
 }
 
 private nonisolated func timelineSort(_ lhs: TimelineBlockItem, _ rhs: TimelineBlockItem) -> Bool {
+    // Today is visually a timeline, so chronological order dominates the sort.
     if lhs.startMinuteOfDay != rhs.startMinuteOfDay {
         return lhs.startMinuteOfDay < rhs.startMinuteOfDay
     }

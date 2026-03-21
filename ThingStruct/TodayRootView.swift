@@ -1,82 +1,71 @@
 import SwiftUI
 
+// `TodayRootView` is the most interaction-heavy screen in the app.
+//
+// It combines:
+// - a timeline visualization
+// - selection state (`selectedBlockID`)
+// - editor sheet presentation
+// - direct manipulation gestures for resizing blocks
 struct TodayRootView: View {
+    // `@Environment(Type.self)` reads a shared dependency from the surrounding
+    // SwiftUI tree. Think of it as injected app state rather than a global singleton.
     @Environment(ThingStructStore.self) private var store
+    // `@State` stores view-local mutable state that survives body recomputation.
     @State private var editorSession: BlockEditorSession?
     @State private var jumpToCurrentTrigger = 0
 
     var body: some View {
+        // `NavigationStack` is the native container that provides titles, toolbars,
+        // and future push navigation behavior.
         NavigationStack {
-            Group {
-                if !store.isLoaded {
-                    ScreenLoadingView(
-                        title: "Loading Today",
-                        systemImage: "calendar",
-                        description: "Preparing your timeline and current context."
-                    )
-                } else {
-                    let result = Result { try store.todayScreenModel() }
-
-                    switch result {
-                    case let .success(model):
-                        let currentMinute = store.selectedDate == LocalDay.today() ? store.minuteOfDay(for: .now) : nil
-                        let currentActiveBlockID = store.selectedDate == LocalDay.today() ? store.currentActiveBlockID() : nil
-
-                        TodayTimelineView(
-                            model: model,
-                            selectedBlockID: store.selectedBlockID,
-                            currentMinute: currentMinute,
-                            currentActiveBlockID: currentActiveBlockID,
-                            jumpToCurrentTrigger: jumpToCurrentTrigger,
-                            timingResolver: { blockID in
-                                store.persistedBlock(on: store.selectedDate, blockID: blockID)?.timing
-                            },
-                            resizeBounds: { blockID in
-                                store.resizeBounds(on: store.selectedDate, blockID: blockID)
-                            },
-                            onResizeBlockStart: { blockID, proposedStartMinuteOfDay in
-                                store.resizeBlockStart(
-                                    on: store.selectedDate,
-                                    blockID: blockID,
-                                    proposedStartMinuteOfDay: proposedStartMinuteOfDay
-                                )
-                            },
-                            onResizeBlockEnd: { blockID, proposedEndMinuteOfDay in
-                                store.resizeBlockEnd(
-                                    on: store.selectedDate,
-                                    blockID: blockID,
-                                    proposedEndMinuteOfDay: proposedEndMinuteOfDay
-                                )
-                            },
-                            onSelect: { blockID in
-                                store.selectBlock(blockID)
-                            }
+            RootScreenContainer(
+                isLoaded: store.isLoaded,
+                loadingTitle: "Loading Today",
+                loadingSystemImage: "calendar",
+                loadingDescription: "Preparing your timeline and current context.",
+                errorTitle: "Unable to Load Today",
+                retry: store.reload
+            ) {
+                try store.todayScreenModel()
+            } content: { model in
+                TodayTimelineView(
+                    model: model,
+                    selectedBlockID: store.selectedBlockID,
+                    currentMinute: store.currentMinuteOnSelectedDate(),
+                    jumpToCurrentTrigger: jumpToCurrentTrigger,
+                    timingResolver: { blockID in
+                        store.persistedBlock(on: store.selectedDate, blockID: blockID)?.timing
+                    },
+                    resizeBounds: { blockID in
+                        store.resizeBounds(on: store.selectedDate, blockID: blockID)
+                    },
+                    onResizeBlockStart: { blockID, proposedStartMinuteOfDay in
+                        store.resizeBlockStart(
+                            on: store.selectedDate,
+                            blockID: blockID,
+                            proposedStartMinuteOfDay: proposedStartMinuteOfDay
                         )
-
-                    case let .failure(error):
-                        RecoverableErrorView(
-                            title: "Unable to Load Today",
-                            message: error.localizedDescription
-                        ) {
-                            store.reload()
-                        }
-                    }
-                }
+                    },
+                    onResizeBlockEnd: { blockID, proposedEndMinuteOfDay in
+                        store.resizeBlockEnd(
+                            on: store.selectedDate,
+                            blockID: blockID,
+                            proposedEndMinuteOfDay: proposedEndMinuteOfDay
+                        )
+                    },
+                    onSelect: store.selectBlock
+                )
             }
             .navigationTitle(store.selectedDate.titleText)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        selectDate(store.selectedDate.adding(days: -1))
+                        store.moveSelectedDate(by: -1)
                     } label: {
                         Image(systemName: "chevron.left")
                     }
-                }
-
-                ToolbarItem(placement: .principal) {
-                    Text(store.selectedDate.titleText)
-                        .font(.headline.weight(.semibold))
                 }
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -88,7 +77,7 @@ struct TodayRootView: View {
                         }
                     } else {
                         Button("Today") {
-                            selectDate(.today())
+                            store.selectDate(.today())
                         }
                     }
 
@@ -102,67 +91,44 @@ struct TodayRootView: View {
                     }
 
                     Button {
-                        selectDate(store.selectedDate.adding(days: 1))
+                        store.moveSelectedDate(by: 1)
                     } label: {
                         Image(systemName: "chevron.right")
                     }
                 }
             }
         }
-        .sheet(item: $editorSession) { session in
-            BlockEditorSheet(title: session.title, draft: session.draft) { draft in
-                do {
-                    let savedBlockID = try store.saveBlockDraft(draft, for: store.selectedDate)
-                    store.selectBlock(savedBlockID)
-                } catch {
-                    store.lastErrorMessage = error.localizedDescription
-                }
-            } onCancelBlock: {
-                guard let blockID = session.cancelBlockID else { return }
-                store.cancelBlock(on: store.selectedDate, blockID: blockID)
+            .sheet(item: $editorSession) { session in
+                TodayBlockEditorPresenter(session: session)
             }
-        }
-        .sheet(isPresented: detailSheetIsPresented) {
-            TodayBlockDetailSheet()
+            // We present detail as an item-based sheet rather than a plain Bool sheet.
+            // That keeps "what is selected" and "should the sheet exist" aligned.
+        .sheet(item: selectedBlockDetailBinding) { block in
+            TodayBlockDetailSheet(block: block)
                 .environment(store)
         }
-        .task(id: store.selectedDate) {
-            store.ensureMaterialized(for: store.selectedDate)
-        }
-        .onAppear {
-            store.selectBlock(nil)
-        }
-    }
-
-    private func selectDate(_ date: LocalDay) {
-        store.selectDate(date)
     }
 
     private func jumpToCurrent() {
-        if let currentBlockID = store.currentActiveBlockID() {
-            store.selectBlock(currentBlockID)
-        }
-
+        // The timeline watches this trigger with `.onChange`, so bumping the integer
+        // is a simple way to request an imperative scroll from an otherwise
+        // declarative view hierarchy.
+        store.selectBlock(store.currentActiveBlockID())
         jumpToCurrentTrigger += 1
     }
 
-    private var detailSheetIsPresented: Binding<Bool> {
+    private var selectedBlockDetailBinding: Binding<BlockDetailModel?> {
+        // The store does not literally own a `BlockDetailModel?`; it owns a selected ID
+        // and derives the detail. A custom `Binding` lets sheet dismissal write `nil`
+        // back into that underlying selection state.
         Binding(
-            get: { selectedBlockDetail != nil },
-            set: { isPresented in
-                if !isPresented {
+            get: { store.selectedBlockDetail },
+            set: { detail in
+                if detail == nil {
                     store.selectBlock(nil)
                 }
             }
         )
-    }
-
-    private var selectedBlockDetail: BlockDetailModel? {
-        guard store.isLoaded, let selectedBlockID = store.selectedBlockID else {
-            return nil
-        }
-
-        return try? store.blockDetail(for: store.selectedDate, blockID: selectedBlockID)
     }
 }
 
@@ -170,7 +136,6 @@ private struct TodayTimelineView: View {
     let model: TodayScreenModel
     let selectedBlockID: UUID?
     let currentMinute: Int?
-    let currentActiveBlockID: UUID?
     let jumpToCurrentTrigger: Int
     let timingResolver: (UUID) -> TimeBlockTiming?
     let resizeBounds: (UUID) -> BlockResizeBounds?
@@ -181,12 +146,16 @@ private struct TodayTimelineView: View {
     @State private var lastInitialScrollDate: LocalDay?
     @State private var resizePreview: TimelineResizePreview?
 
+    // The timeline uses a manual y-axis scale because time maps to position continuously,
+    // not to "one row per item" like a normal list.
     private let hourHeight: CGFloat = 76
     private let labelWidth: CGFloat = 52
     private let timelineTopInset: CGFloat = 12
     private let trackInset: CGFloat = 12
 
     var body: some View {
+        // `ScrollViewReader` gives imperative scrolling control inside an otherwise
+        // declarative view tree. We use it for "jump to current" and initial focus.
         ScrollViewReader { proxy in
             ScrollView {
                 GeometryReader { geometry in
@@ -206,13 +175,15 @@ private struct TodayTimelineView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .task(id: model.date) {
+                // `.task(id:)` reruns whenever the ID changes.
+                // That is exactly what we want when the user switches to a different date.
                 guard lastInitialScrollDate != model.date else { return }
                 lastInitialScrollDate = model.date
 
-                if let currentMinute, let currentActiveBlockID {
+                if let focusBlockID = model.initialFocusBlockID, let fallbackMinute = currentMinute ?? model.blocks.first(where: { $0.id == focusBlockID })?.startMinuteOfDay {
                     scroll(
-                        toBlock: currentActiveBlockID,
-                        fallbackMinute: currentMinute,
+                        toBlock: focusBlockID,
+                        fallbackMinute: fallbackMinute,
                         anchor: .center,
                         proxy: proxy,
                         animated: false
@@ -224,16 +195,15 @@ private struct TodayTimelineView: View {
                 }
             }
             .onChange(of: jumpToCurrentTrigger) { _, _ in
-                guard let currentMinute else { return }
-                if let currentActiveBlockID {
+                if let selectedBlockID {
                     scroll(
-                        toBlock: currentActiveBlockID,
-                        fallbackMinute: currentMinute,
+                        toBlock: selectedBlockID,
+                        fallbackMinute: currentMinute ?? model.initialScrollMinute,
                         anchor: .center,
                         proxy: proxy,
                         animated: true
                     )
-                } else {
+                } else if let currentMinute {
                     scroll(to: currentMinute, anchor: .center, proxy: proxy, animated: true)
                 }
             }
@@ -276,9 +246,26 @@ private struct TodayTimelineView: View {
     }
 
     private func timelineBlock(_ node: TodayTimelineNode, canvasWidth: CGFloat) -> some View {
-        let startDelta = propagatedStartDelta(for: node.block, inheritedStartDelta: 0)
-        let displayedStartMinuteOfDay = displayedStartMinute(for: node.block, startDelta: startDelta)
-        let displayedEndMinuteOfDay = displayedEndMinute(for: node.block, startDelta: startDelta)
+        // Resizing a parent block's start can visually shift relative descendants.
+        // These helper values compute the temporary on-screen preview positions.
+        let startDelta = propagatedStartDelta(
+            for: node.block.id,
+            timing: timingResolver(node.block.id),
+            inheritedStartDelta: 0,
+            resizePreview: resizePreview
+        )
+        let displayedStartMinuteOfDay = displayedStartMinute(
+            for: node.block.id,
+            originalStartMinuteOfDay: node.block.startMinuteOfDay,
+            startDelta: startDelta,
+            resizePreview: resizePreview
+        )
+        let displayedEndMinuteOfDay = displayedEndMinute(
+            for: node.block.id,
+            originalEndMinuteOfDay: node.block.endMinuteOfDay,
+            startDelta: startDelta,
+            resizePreview: resizePreview
+        )
         let y = yPosition(for: displayedStartMinuteOfDay)
         let blockWidth = max(0, canvasWidth - labelWidth - trackInset * 2)
 
@@ -312,6 +299,9 @@ private struct TodayTimelineView: View {
     }
 
     private var rootNodes: [TodayTimelineNode] {
+        // We rebuild a tree from the flat block list on demand.
+        // With Swift value types this is a normal pattern: derive transient structure
+        // during rendering instead of storing multiple mutable representations.
         let childrenByParent = Dictionary(grouping: model.blocks.filter { $0.parentBlockID != nil }) { $0.parentBlockID! }
             .mapValues { $0.sorted(by: timelineNodeSort) }
 
@@ -329,6 +319,8 @@ private struct TodayTimelineView: View {
     }
 
     private var selectedPathIDs: Set<UUID> {
+        // This computes the selected block plus all ancestors so the UI can subtly
+        // highlight the whole active path through the nested overlay tree.
         guard let selectedBlockID else { return [] }
 
         var path = Set([selectedBlockID])
@@ -359,6 +351,8 @@ private struct TodayTimelineView: View {
     }
 
     private func scroll(to minute: Int, anchor: UnitPoint, proxy: ScrollViewProxy, animated: Bool) {
+        // `ScrollViewReader` scrolls to view IDs, not raw pixel offsets.
+        // We therefore map a time minute to the nearest hour-marker view ID.
         let action = {
             proxy.scrollTo(anchorHour(for: minute), anchor: anchor)
         }
@@ -379,6 +373,8 @@ private struct TodayTimelineView: View {
         proxy: ScrollViewProxy,
         animated: Bool
     ) {
+        // Prefer the exact block view when possible. If the block vanished because the
+        // underlying data changed, fall back to an hour marker near the same time.
         let action = {
             if blocksByID[blockID] != nil {
                 proxy.scrollTo(blockID, anchor: anchor)
@@ -406,39 +402,9 @@ private struct TodayTimelineView: View {
         return lhs.id.uuidString < rhs.id.uuidString
     }
 
-    private func propagatedStartDelta(for block: TimelineBlockItem, inheritedStartDelta: Int) -> Int {
-        if let resizePreview, resizePreview.blockID == block.id, resizePreview.edge == .start {
-            return resizePreview.proposedStartMinuteOfDay - resizePreview.currentStartMinuteOfDay
-        }
-
-        guard inheritedStartDelta != 0 else {
-            return 0
-        }
-
-        guard case .relative? = timingResolver(block.id) else {
-            return 0
-        }
-
-        return inheritedStartDelta
-    }
-
-    private func displayedStartMinute(for block: TimelineBlockItem, startDelta: Int) -> Int {
-        if let resizePreview, resizePreview.blockID == block.id {
-            return resizePreview.proposedStartMinuteOfDay
-        }
-
-        return block.startMinuteOfDay + startDelta
-    }
-
-    private func displayedEndMinute(for block: TimelineBlockItem, startDelta: Int) -> Int {
-        if let resizePreview, resizePreview.blockID == block.id {
-            return resizePreview.proposedEndMinuteOfDay
-        }
-
-        return block.endMinuteOfDay + startDelta
-    }
-
     private func beginResize(for blockID: UUID, edge: TimelineResizeEdge) {
+        // Gesture code is simpler if we snapshot bounds/current values at gesture start
+        // and then update a lightweight preview struct as the drag changes.
         guard resizePreview?.blockID != blockID || resizePreview?.edge != edge else { return }
         guard let bounds = resizeBounds(blockID) else { return }
 
@@ -527,6 +493,57 @@ private struct TimelineResizePreview {
     var proposedEndMinuteOfDay: Int
 }
 
+private func propagatedStartDelta(
+    for blockID: UUID,
+    timing: TimeBlockTiming?,
+    inheritedStartDelta: Int,
+    resizePreview: TimelineResizePreview?
+) -> Int {
+    // Relative children move with a parent's dragged start edge during preview.
+    // Absolute-timed descendants keep their own absolute position.
+    if let resizePreview, resizePreview.blockID == blockID, resizePreview.edge == .start {
+        return resizePreview.proposedStartMinuteOfDay - resizePreview.currentStartMinuteOfDay
+    }
+
+    guard inheritedStartDelta != 0 else {
+        return 0
+    }
+
+    guard case .relative? = timing else {
+        return 0
+    }
+
+    return inheritedStartDelta
+}
+
+private func displayedStartMinute(
+    for blockID: UUID,
+    originalStartMinuteOfDay: Int,
+    startDelta: Int,
+    resizePreview: TimelineResizePreview?
+) -> Int {
+    // The block currently being dragged reads its own preview directly.
+    // Other blocks either stay fixed or inherit an ancestor delta.
+    if let resizePreview, resizePreview.blockID == blockID {
+        return resizePreview.proposedStartMinuteOfDay
+    }
+
+    return originalStartMinuteOfDay + startDelta
+}
+
+private func displayedEndMinute(
+    for blockID: UUID,
+    originalEndMinuteOfDay: Int,
+    startDelta: Int,
+    resizePreview: TimelineResizePreview?
+) -> Int {
+    if let resizePreview, resizePreview.blockID == blockID {
+        return resizePreview.proposedEndMinuteOfDay
+    }
+
+    return originalEndMinuteOfDay + startDelta
+}
+
 private struct TimelineBlockCard: View {
     let node: TodayTimelineNode
     let hourHeight: CGFloat
@@ -567,19 +584,12 @@ private struct TimelineBlockCard: View {
     }
 
     private var nodeStartDelta: Int {
-        if let resizePreview, resizePreview.blockID == block.id, resizePreview.edge == .start {
-            return resizePreview.proposedStartMinuteOfDay - resizePreview.currentStartMinuteOfDay
-        }
-
-        guard inheritedStartDelta != 0 else {
-            return 0
-        }
-
-        guard case .relative? = timingResolver(block.id) else {
-            return 0
-        }
-
-        return inheritedStartDelta
+        propagatedStartDelta(
+            for: block.id,
+            timing: timingResolver(block.id),
+            inheritedStartDelta: inheritedStartDelta,
+            resizePreview: resizePreview
+        )
     }
 
     private var cardHeight: CGFloat {
@@ -664,6 +674,8 @@ private struct TimelineBlockCard: View {
             let childWidth = max(geometry.size.width - childHorizontalInset * 2, 1)
 
             ZStack(alignment: .topLeading) {
+                // Nested overlays are drawn recursively: a card renders its children
+                // by embedding more `TimelineBlockCard` views inside itself.
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(backgroundColor)
 
@@ -711,6 +723,8 @@ private struct TimelineBlockCard: View {
     }
 
     private var backgroundColor: Color {
+        // Appearance is derived from semantic state rather than mutated imperatively.
+        // That makes selection/resizing visuals deterministic and easy to reason about.
         if isResizing {
             return style.strongSurface
         }
@@ -759,34 +773,35 @@ private struct TimelineBlockCard: View {
     }
 
     private func childYOffset(for child: TodayTimelineNode, childHeight: CGFloat) -> CGFloat {
-        let displayedChildStartMinuteOfDay = childDisplayedStartMinute(of: child)
-        let relative = CGFloat(displayedChildStartMinuteOfDay - displayedStartMinuteOfDay) / 60.0 * hourHeight
+        // Children should remain close to their true time position, but the parent
+        // header also needs breathing room so nested cards do not visually collide
+        // with the title area.
+        let childRange = childDisplayedRange(of: child)
+        let relative = CGFloat(childRange.startMinuteOfDay - displayedStartMinuteOfDay) / 60.0 * hourHeight
         let desiredTop = headerReservedHeight + childGap
         let availableShift = max(0, cardHeight - childHeight - childGap - relative)
         let shift = min(max(0, desiredTop - relative), availableShift)
         return relative + shift
     }
 
-    @ViewBuilder
     private func childCard(
         for child: TodayTimelineNode,
         width: CGFloat,
         horizontalInset: CGFloat
     ) -> some View {
-        let childDisplayedStartMinuteOfDay = childDisplayedStartMinute(of: child)
-        let childDisplayedEndMinuteOfDay = childDisplayedEndMinute(of: child)
+        let childRange = childDisplayedRange(of: child)
         let childHeight = max(
-            CGFloat(childDisplayedEndMinuteOfDay - childDisplayedStartMinuteOfDay) / 60.0 * hourHeight,
+            CGFloat(childRange.endMinuteOfDay - childRange.startMinuteOfDay) / 60.0 * hourHeight,
             minimumHeight
         )
 
-        TimelineBlockCard(
+        return TimelineBlockCard(
             node: child,
             hourHeight: hourHeight,
             selectedBlockID: selectedBlockID,
             selectedPathIDs: selectedPathIDs,
-            displayedStartMinuteOfDay: childDisplayedStartMinuteOfDay,
-            displayedEndMinuteOfDay: childDisplayedEndMinuteOfDay,
+            displayedStartMinuteOfDay: childRange.startMinuteOfDay,
+            displayedEndMinuteOfDay: childRange.endMinuteOfDay,
             inheritedStartDelta: nodeStartDelta,
             timingResolver: timingResolver,
             resizingBlockID: resizingBlockID,
@@ -804,28 +819,31 @@ private struct TimelineBlockCard: View {
         )
     }
 
-    private func childDisplayedStartMinute(of child: TodayTimelineNode) -> Int {
-        child.block.startMinuteOfDay + childStartDelta(for: child)
-    }
+    private func childDisplayedRange(of child: TodayTimelineNode) -> (startMinuteOfDay: Int, endMinuteOfDay: Int) {
+        // Recursive rendering asks the same question at every level:
+        // "given the current preview delta from my ancestors, where should this child
+        // appear right now?"
+        let startDelta = propagatedStartDelta(
+            for: child.block.id,
+            timing: timingResolver(child.block.id),
+            inheritedStartDelta: nodeStartDelta,
+            resizePreview: resizePreview
+        )
 
-    private func childDisplayedEndMinute(of child: TodayTimelineNode) -> Int {
-        if let resizePreview, resizePreview.blockID == child.block.id {
-            return resizePreview.proposedEndMinuteOfDay
-        }
-
-        return child.block.endMinuteOfDay + childStartDelta(for: child)
-    }
-
-    private func childStartDelta(for child: TodayTimelineNode) -> Int {
-        if let resizePreview, resizePreview.blockID == child.block.id, resizePreview.edge == .start {
-            return resizePreview.proposedStartMinuteOfDay - resizePreview.currentStartMinuteOfDay
-        }
-
-        if nodeStartDelta != 0, case .relative? = timingResolver(child.block.id) {
-            return nodeStartDelta
-        }
-
-        return 0
+        return (
+            startMinuteOfDay: displayedStartMinute(
+                for: child.block.id,
+                originalStartMinuteOfDay: child.block.startMinuteOfDay,
+                startDelta: startDelta,
+                resizePreview: resizePreview
+            ),
+            endMinuteOfDay: displayedEndMinute(
+                for: child.block.id,
+                originalEndMinuteOfDay: child.block.endMinuteOfDay,
+                startDelta: startDelta,
+                resizePreview: resizePreview
+            )
+        )
     }
 
     private func resizeHandle(edge: TimelineResizeEdge) -> some View {
@@ -840,6 +858,8 @@ private struct TimelineBlockCard: View {
     }
 
     private func resizeGesture(edge: TimelineResizeEdge) -> some Gesture {
+        // `sequenced(before:)` lets us model "long press, then drag" as one gesture.
+        // This avoids accidental resizes during normal scrolling/tapping.
         LongPressGesture(minimumDuration: 0.35)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .onChanged { value in
@@ -863,47 +883,28 @@ private struct TimelineBlockCard: View {
 private struct TodayBlockDetailSheet: View {
     @Environment(ThingStructStore.self) private var store
     @State private var editorSession: BlockEditorSession?
-
-    private var block: BlockDetailModel? {
-        guard let selectedBlockID = store.selectedBlockID else {
-            return nil
-        }
-
-        return try? store.blockDetail(for: store.selectedDate, blockID: selectedBlockID)
-    }
+    let block: BlockDetailModel
 
     var body: some View {
-        Group {
-            if let block {
-                TodayBlockDetailContent(
-                    block: block,
-                    onEdit: { beginEditing(block) },
-                    onAddOverlay: { beginOverlayCreation(for: block) },
-                    onCreateBase: { beginBaseCreation(from: block) }
-                )
-            } else {
-                Color.clear
-            }
-        }
+        // The detail sheet stays intentionally small and native-looking.
+        // It is a contextual inspector, not a full-screen destination.
+        TodayBlockDetailContent(
+            block: block,
+            onEdit: { beginEditing(block) },
+            onAddOverlay: { beginOverlayCreation(for: block) },
+            onCreateBase: { beginBaseCreation(from: block) }
+        )
         .presentationDetents([.height(272), .medium])
         .presentationDragIndicator(.visible)
         .presentationContentInteraction(.scrolls)
         .sheet(item: $editorSession) { session in
-            BlockEditorSheet(title: session.title, draft: session.draft) { draft in
-                do {
-                    let savedBlockID = try store.saveBlockDraft(draft, for: store.selectedDate)
-                    store.selectBlock(savedBlockID)
-                } catch {
-                    store.lastErrorMessage = error.localizedDescription
-                }
-            } onCancelBlock: {
-                guard let blockID = session.cancelBlockID else { return }
-                store.cancelBlock(on: store.selectedDate, blockID: blockID)
-            }
+            TodayBlockEditorPresenter(session: session)
         }
     }
 
     private func beginEditing(_ block: BlockDetailModel) {
+        // The detail model is presentation data. To build an editor draft we re-read
+        // the persisted source block so timing information matches what is actually stored.
         guard let sourceBlock = store.persistedBlock(on: store.selectedDate, blockID: block.id) else { return }
 
         editorSession = BlockEditorSession(
@@ -923,6 +924,7 @@ private struct TodayBlockDetailSheet: View {
     }
 
     private func beginBaseCreation(from block: BlockDetailModel) {
+        // Tapping open time seeds a new base block with the blank range the user selected.
         var draft = BlockDraft.base(startMinute: block.startMinuteOfDay, endMinute: block.endMinuteOfDay)
         draft.title = "New Block"
         editorSession = BlockEditorSession(
@@ -951,6 +953,7 @@ private struct TodayBlockDetailContent: View {
     }
 
     private var normalizedNote: String? {
+        // Treat empty note text the same as a missing note so the render logic stays simple.
         let trimmed = block.note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
     }
@@ -1093,6 +1096,28 @@ private struct BlockEditorSession: Identifiable {
     var cancelBlockID: UUID? = nil
 }
 
+private struct TodayBlockEditorPresenter: View {
+    @Environment(ThingStructStore.self) private var store
+
+    let session: BlockEditorSession
+
+    var body: some View {
+        // This adapter translates generic form output (`BlockDraft`) into concrete
+        // store mutations. Parent views stay focused on layout instead of save logic.
+        BlockEditorSheet(title: session.title, draft: session.draft) { draft in
+            do {
+                let savedBlockID = try store.saveBlockDraft(draft, for: store.selectedDate)
+                store.selectBlock(savedBlockID)
+            } catch {
+                store.presentError(error)
+            }
+        } onCancelBlock: {
+            guard let blockID = session.cancelBlockID else { return }
+            store.cancelBlock(on: store.selectedDate, blockID: blockID)
+        }
+    }
+}
+
 #Preview("Today Root") {
     TodayRootView()
         .environment(PreviewSupport.store(tab: .today))
@@ -1119,7 +1144,6 @@ private struct BlockEditorSession: Identifiable {
         model: model,
         selectedBlockID: model.selectedBlock?.id,
         currentMinute: 9 * 60 + 30,
-        currentActiveBlockID: model.selectedBlock?.id,
         jumpToCurrentTrigger: 0,
         timingResolver: { _ in nil },
         resizeBounds: { _ in nil },
@@ -1135,7 +1159,6 @@ private struct BlockEditorSession: Identifiable {
         model: model,
         selectedBlockID: nil,
         currentMinute: nil,
-        currentActiveBlockID: nil,
         jumpToCurrentTrigger: 0,
         timingResolver: { _ in nil },
         resizeBounds: { _ in nil },
@@ -1158,7 +1181,6 @@ private struct BlockEditorSession: Identifiable {
         model: model,
         selectedBlockID: model.selectedBlock?.id,
         currentMinute: nil,
-        currentActiveBlockID: nil,
         jumpToCurrentTrigger: 0,
         timingResolver: { _ in nil },
         resizeBounds: { _ in nil },

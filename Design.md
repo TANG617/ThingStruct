@@ -242,7 +242,6 @@ UI 不自行计算以下结果：
 
 - 自由拖拽 reparent
 - 在 blank 上直接创建 overlay
-- 在当前阶段拖拽 block 的起点位置
 - 在当前阶段整体平移 block 所在时间段
 
 #### 4.2.3 面板组织
@@ -285,8 +284,10 @@ UI 不自行计算以下结果：
 - 打开 `Today` 时，时间轴默认优先定位到“当前时间线”附近
 - 如果查看的是今天：
   - 默认将当前时间线放在视口中部附近，而不是贴近顶部
-  - 默认选中当前 `activeBlock`
+  - 如果存在当前 `activeBlock`，初始滚动应优先参考它的位置
 - 如果查看的不是今天，而是其他日期，则默认定位到当天第一个用户定义块附近
+- 打开 `Today` 或切换日期时，不自动弹出 block detail
+- 初始定位不依赖“默认选中当前块”来实现；只有用户显式点选 block，或主动触发“回到当前时间”时，才允许打开 detail
 - 自动定位只应发生在页面首次进入或切换日期时，用户手动滚动或手动选中后不应反复抢焦点
 - 时间轴滚动位置只在当前会话内保留，不需要长期持久化
 - “回到当前时间”按钮应始终可用
@@ -305,19 +306,26 @@ UI 不自行计算以下结果：
 
 #### 4.2.6 时间轴直接操纵
 
-- 支持在 `Today` 中通过长按 block 后拖动其底边来调整 block 长度
-- 第一阶段只允许调整长度，不允许拖动起点，不允许整体平移
+- 支持在 `Today` 中通过长按 block 后拖动其上边或下边来直接调整 block 起止时间
+- 上边手柄调整开始时间，下边手柄调整结束时间
+- 仍然不支持整体平移 block，也不支持通过拖拽改变父子关系
 - 进入 resize 模式后，应提供清晰但克制的视觉反馈，例如：
   - 当前 block 高亮
-  - 底边出现可拖拽手柄
-  - 拖动过程中显示结束时间预览
+  - 起点和终点出现可拖拽手柄
+  - 拖动过程中 block 本体实时更新起止时间预览
+  - 如果拖动的是父 block 的开始时间，采用 relative timing 的后代在预览中应一起平移，以维持嵌套关系的可读性
 - 约束规则：
   - `BlankBaseBlock` 不可调整
   - block 最短长度为 5 分钟
+  - block 的开始时间不能早于同层前一个兄弟 block 的结束时间
+  - `OverlayBlock` 的开始时间不能早于父 block 的开始时间
   - `BaseBlock` 的结束时间不能越过下一个同层兄弟 block，也不能越过午夜
   - `OverlayBlock` 的结束时间不能越过父 block 的结束时间
   - `OverlayBlock` 的结束时间不能越过下一个同层兄弟 overlay
+  - 调整开始时间时，不能破坏后代 block 已解析出的有效区间；如果某个候选开始时间会让后代超界或改变被保护的结束位置，则应被拒绝
 - 写回规则：
+  - absolute block 拖动起点时写回 `startMinuteOfDay`
+  - relative overlay 拖动起点时写回 `startOffsetMinutes` 与 `requestedDurationMinutes`
   - absolute block 写回 `requestedEndMinuteOfDay`
   - relative overlay 写回 `requestedDurationMinutes`
   - 如果 overlay 原本是开放结束，用户拖拽后应转为显式 duration
@@ -535,6 +543,8 @@ Saved 卡片应满足：
 - 呈现 base/overlay/blank 三类块
 - 响应点击选中
 - 呈现“当前时间”指示线
+- 处理“回到当前时间”的滚动定位
+- 处理 block 起点和终点的直接拖拽预览
 
 这是 UI 中最主要的定制视图，但依然应保持系统风格，避免过多视觉表演。
 
@@ -584,6 +594,7 @@ sheet 建议：
 - `BlockEditorSheet` 使用中到大尺寸 detent
 - `TemplateEditorSheet` 使用大尺寸 detent 或全屏 sheet
 - `Today` 的 block detail 使用原生 sheet detent，而不是 `safeAreaInset` 自绘面板
+- `Today` 的 block detail 不应扩展到全屏；建议限制在紧凑高度和 `medium` detent 之间
 - 不在一个操作流中连续堆叠多个 sheet
 
 ## 7. 数据流与状态管理
@@ -734,21 +745,20 @@ blank 时段应可见，但不抢主视觉。
 
 ## 11. 与当前仓库的关系
 
-当前仓库仍然保留旧页面结构，例如：
+当前仓库已经进入新的 UI 架构：
 
-- [ContentView.swift](/Users/timli/workspace/ThingStruct/ThingStruct/ContentView.swift)
-- [AddStateView.swift](/Users/timli/workspace/ThingStruct/ThingStruct/AddStateView.swift)
-- [StateDetailView.swift](/Users/timli/workspace/ThingStruct/ThingStruct/StateDetailView.swift)
-- [FloatingActionButton.swift](/Users/timli/workspace/ThingStruct/ThingStruct/FloatingActionButton.swift)
+- [ContentView.swift](/Users/timli/workspace/ThingStruct/ThingStruct/ContentView.swift) 持有唯一 `ThingStructStore`
+- [AppShellView.swift](/Users/timli/workspace/ThingStruct/ThingStruct/AppShellView.swift) 负责三 tab 壳层与全局错误提示
+- [NowRootView.swift](/Users/timli/workspace/ThingStruct/ThingStruct/NowRootView.swift)、[TodayRootView.swift](/Users/timli/workspace/ThingStruct/ThingStruct/TodayRootView.swift)、[TemplatesRootView.swift](/Users/timli/workspace/ThingStruct/ThingStruct/TemplatesRootView.swift) 分别承接三个主页面
+- [ThingStructStore.swift](/Users/timli/workspace/ThingStruct/ThingStruct/ThingStructStore.swift) 负责文档加载、物化、命令和持久化
+- [ScreenModels.swift](/Users/timli/workspace/ThingStruct/ThingStruct/CoreShared/ScreenModels.swift) 负责将核心模型映射为页面呈现模型
 
-这些页面和组件不应继续作为最终 UI 架构的中心。
+当前阶段的重点不再是从旧页面迁移，而是持续收紧以下边界：
 
-迁移目标是：
-
-- 用新的三 tab 壳层替换旧单页入口
-- 用 core screen model 替换旧页面内部计算逻辑
-- 用统一的 editor sheet 替换分散的旧编辑页
-- 移除自定义 FAB 方案
+- root view 不直接承担核心规则计算
+- editor 统一通过 sheet 呈现
+- timeline、now、templates 的复杂推导优先留在 core / presentation 层
+- store 暴露稳定、尽量收敛的 query 和 command API
 
 ## 12. 当前文档的实现约束
 

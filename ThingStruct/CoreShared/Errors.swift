@@ -1,5 +1,10 @@
 import Foundation
 
+// Centralized domain errors for the core layer.
+//
+// The app intentionally throws typed errors from the engines instead of returning
+// ad-hoc booleans, because the failure modes carry useful product semantics:
+// "duplicate weekday rule" is very different from "block overlaps parent".
 public enum ThingStructCoreError: Error, Equatable, Sendable {
     case duplicateBlockID(UUID)
     case missingBlock(UUID)

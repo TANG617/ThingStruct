@@ -1,5 +1,15 @@
 import Foundation
 
+// This file defines the app's core domain model.
+//
+// If you come from C++:
+// - most entities here are plain value types (`struct`) rather than reference types
+// - `enum` with associated values replaces many "tag + payload" class hierarchies
+// - `Codable` means the type can be serialized/deserialized
+// - `Sendable` means the value is safe to pass across concurrency boundaries
+
+// `LocalDay` is a date without time-of-day or timezone ambiguity.
+// This is much safer for planning logic than using `Date` everywhere.
 public struct LocalDay: Hashable, Codable, Comparable, Sendable {
     public let year: Int
     public let month: Int
@@ -78,6 +88,8 @@ extension LocalDay: CustomStringConvertible {
 }
 
 public extension Calendar {
+    // The planning engines use a fixed Gregorian calendar in GMT when they need
+    // stable date arithmetic. This avoids locale/timezone surprises inside core logic.
     nonisolated static var thingStructGregorian: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
@@ -86,6 +98,8 @@ public extension Calendar {
 }
 
 public extension Int {
+    // Time editing in the app works on a 5-minute grid.
+    // These helpers are the low-level building blocks for snapping/clamping.
     nonisolated func snapped(toStep step: Int, within range: ClosedRange<Int>) -> Int {
         precondition(step > 0, "Step must be positive.")
 
@@ -131,6 +145,8 @@ public extension Int {
     }
 }
 
+// `Weekday` is kept as an enum instead of raw integers everywhere so invalid values
+// are harder to represent.
 public enum Weekday: Int, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case sunday = 1
     case monday = 2
@@ -192,6 +208,8 @@ public enum Weekday: Int, Codable, CaseIterable, Hashable, Sendable, Identifiabl
 }
 
 public extension Set where Element == Weekday {
+    // These helpers bridge between the convenient in-memory representation (`Set<Weekday>`)
+    // and persistence/UI needs that often prefer arrays.
     var toIntArray: [Int] {
         map(\.rawValue).sorted()
     }
@@ -201,11 +219,14 @@ public extension Set where Element == Weekday {
     }
 }
 
+// `kind` separates user-authored blocks from runtime-only blank filler blocks.
 public enum TimeBlockKind: String, Equatable, Codable, Sendable {
     case userDefined
     case blankBase
 }
 
+// `TaskItem` represents a task inside an actual day plan block.
+// Completion state belongs here because it is day-specific, not template-specific.
 public struct TaskItem: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var title: String
@@ -228,6 +249,8 @@ public struct TaskItem: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
+// `TaskBlueprint` is the template counterpart of `TaskItem`.
+// It describes tasks before they are instantiated into a real day.
 public struct TaskBlueprint: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var title: String
@@ -244,11 +267,25 @@ public struct TaskBlueprint: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
+// Timing is modeled as an enum because a block is either:
+// - absolute: anchored to the day clock
+// - relative: anchored to its parent block
+//
+// This is much stronger than carrying optional fields for both modes at once.
 public enum TimeBlockTiming: Equatable, Codable, Sendable {
     case absolute(startMinuteOfDay: Int, requestedEndMinuteOfDay: Int?)
     case relative(startOffsetMinutes: Int, requestedDurationMinutes: Int?)
 }
 
+// `TimeBlock` is the central planning primitive.
+//
+// A block can be:
+// - a top-level base block for the day
+// - a nested overlay block inside another block
+// - a runtime-generated blank base block
+//
+// The resolved start/end values are caches produced by `DayPlanEngine`.
+// The persisted truth is still `timing`.
 public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var dayPlanID: UUID?
@@ -293,6 +330,7 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
 }
 
 public extension TimeBlock {
+    // Small convenience queries keep calling code readable.
     nonisolated var hasIncompleteTasks: Bool {
         tasks.contains { !$0.isCompleted }
     }
@@ -302,6 +340,7 @@ public extension TimeBlock {
     }
 }
 
+// When the user drags a block edge in `Today`, the UI needs precomputed legal bounds.
 public struct BlockResizeBounds: Equatable, Sendable {
     public var blockID: UUID
     public var startMinuteOfDay: Int
@@ -330,6 +369,9 @@ public struct BlockResizeBounds: Equatable, Sendable {
     }
 }
 
+// `DayPlan` is the persisted schedule for a single calendar day.
+// It stores authored blocks plus metadata about whether the day came from a template
+// and whether the user has diverged from that template.
 public struct DayPlan: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var date: LocalDay
@@ -356,6 +398,7 @@ public struct DayPlan: Identifiable, Equatable, Codable, Sendable {
 }
 
 public extension DayPlan {
+    // Used to guard destructive operations such as regenerating a future day from templates.
     var containsCompletedTasks: Bool {
         blocks.contains { block in
             block.tasks.contains { $0.isCompleted }
@@ -363,6 +406,8 @@ public extension DayPlan {
     }
 }
 
+// Template-side block representation.
+// It mirrors `TimeBlock`, but uses `TaskBlueprint` and template parent IDs.
 public struct BlockTemplate: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var parentTemplateBlockID: UUID?
@@ -391,6 +436,7 @@ public struct BlockTemplate: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
+// Suggested templates are derived from recent real day plans.
 public struct SuggestedDayTemplate: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var sourceDate: LocalDay
@@ -410,6 +456,7 @@ public struct SuggestedDayTemplate: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
+// Saved templates are user-owned reusable plans.
 public struct SavedDayTemplate: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var title: String
@@ -435,6 +482,7 @@ public struct SavedDayTemplate: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
+// "Use template X for every Monday" style rule.
 public struct WeekdayTemplateRule: Equatable, Codable, Sendable {
     public var weekday: Weekday
     public var savedTemplateID: UUID
@@ -445,6 +493,7 @@ public struct WeekdayTemplateRule: Equatable, Codable, Sendable {
     }
 }
 
+// "Use template X on this specific date, regardless of weekday rule" style rule.
 public struct DateTemplateOverride: Equatable, Codable, Sendable {
     public var date: LocalDay
     public var savedTemplateID: UUID
@@ -455,6 +504,11 @@ public struct DateTemplateOverride: Equatable, Codable, Sendable {
     }
 }
 
+// `ActiveSelection` is the result of asking:
+// "Given the current minute, which chain of nested blocks is active?"
+//
+// `chain` contains all layers from base -> topmost active overlay.
+// `taskSourceBlock` tells `Now` which block should currently own the actionable tasks.
 public struct ActiveSelection: Equatable, Sendable {
     public let chain: [TimeBlock]
     public let taskSourceBlock: TimeBlock?

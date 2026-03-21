@@ -1,5 +1,9 @@
 import Foundation
 
+// `ThingStructDocument` is the top-level persisted object for the entire app.
+// If you imagine the app state as a tree, this is the root node that gets encoded to JSON.
+//
+// Everything the user can persist must be reachable from here.
 public struct ThingStructDocument: Equatable, Codable, Sendable {
     public var dayPlans: [DayPlan]
     public var savedTemplates: [SavedDayTemplate]
@@ -20,16 +24,24 @@ public struct ThingStructDocument: Equatable, Codable, Sendable {
 }
 
 public extension ThingStructDocument {
+    // Convenient lookup helper. This is intentionally linear because the document
+    // is still small and keeping the serialized shape simple is valuable.
     func dayPlan(for date: LocalDay) -> DayPlan? {
         dayPlans.first(where: { $0.date == date })
     }
 }
 
+// `SampleDataFactory` exists purely to make first launch and previews pleasant.
+// It gives the UI a believable dataset before a user has authored real content.
 public enum SampleDataFactory {
     public static func seededDocument(
         referenceDay: LocalDay = .today(),
         generatedAt: Date = Date()
     ) throws -> ThingStructDocument {
+        // The seeded data intentionally covers a small rolling window so:
+        // - `Now` has something active today
+        // - `Templates` has recent days to summarize
+        // - tomorrow can demonstrate template materialization
         let recentDays = [
             referenceDay.adding(days: -2),
             referenceDay.adding(days: -1),
@@ -92,6 +104,8 @@ public enum SampleDataFactory {
         variant: Int,
         generatedAt: Date
     ) throws -> DayPlan {
+        // The factory builds plain domain values first, then asks `DayPlanEngine`
+        // to validate and resolve them, just like production code does.
         let morning = TimeBlock(
             layerIndex: 0,
             title: "Morning",

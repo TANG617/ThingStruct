@@ -1,11 +1,21 @@
 import SwiftUI
 
+// `AppShellView` is the global frame around the three feature screens.
+// It owns navigation between tabs and shows app-wide errors.
+//
+// Architecturally, this is close to a "shell" or "frame window" in desktop UI.
 struct AppShellView: View {
+    // `@Environment(ThingStructStore.self)` asks SwiftUI to inject the shared store.
+    // This avoids manually threading the store through every initializer.
     @Environment(ThingStructStore.self) private var store
 
     var body: some View {
+        // `@Bindable` creates bindings into an `@Observable` object.
+        // In C++ terms, this is a bit like getting mutable references to fields
+        // while still letting the framework observe changes and trigger re-rendering.
         @Bindable var store = store
 
+        // `TabView` is the iOS equivalent of a bottom tab bar controller.
         TabView(selection: $store.selectedTab) {
             NowRootView()
                 .tabItem {
@@ -25,20 +35,17 @@ struct AppShellView: View {
                 }
                 .tag(RootTab.templates)
         }
-        .onChange(of: store.selectedTab) { _, _ in
-            if store.selectedBlockID != nil {
-                store.selectBlock(nil)
-            }
-        }
+        // Global error presentation lives here so feature screens can report errors
+        // without each screen reinventing its own alert state.
         .alert(
             "Unable to Complete Action",
             isPresented: Binding(
                 get: { store.lastErrorMessage != nil },
-                set: { if !$0 { store.lastErrorMessage = nil } }
+                set: { if !$0 { store.dismissError() } }
             )
         ) {
             Button("OK") {
-                store.lastErrorMessage = nil
+                store.dismissError()
             }
         } message: {
             Text(store.lastErrorMessage ?? "")

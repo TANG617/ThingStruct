@@ -1,5 +1,9 @@
 import SwiftUI
 
+// `TemplatesRootView` is the management screen for reusable schedule structure.
+//
+// It intentionally mixes read-only summaries with a small number of commands:
+// save suggestion, edit template, assign weekday rule, set tomorrow override.
 private enum TemplatesSection: String, CaseIterable, Identifiable {
     case suggested = "Suggested"
     case saved = "Saved"
@@ -11,85 +15,78 @@ private enum TemplatesSection: String, CaseIterable, Identifiable {
 struct TemplatesRootView: View {
     @Environment(ThingStructStore.self) private var store
     @State private var selectedSection: TemplatesSection = .suggested
-    @State private var saveSession: SaveTemplateSession?
-    @State private var editingTemplate: SavedDayTemplate?
+
+    // This enum acts like a compact "navigation state machine" for sheet presentation.
+    // One optional enum is often clearer than several unrelated optional booleans/items.
+    @State private var sheet: TemplatesSheet?
 
     var body: some View {
         NavigationStack {
-            Group {
-                if !store.isLoaded {
-                    ScreenLoadingView(
-                        title: "Loading Templates",
-                        systemImage: "square.stack.3d.up",
-                        description: "Preparing suggested templates and tomorrow's schedule."
-                    )
-                } else {
-                    let result = Result { try store.templatesScreenModel() }
+            RootScreenContainer(
+                isLoaded: store.isLoaded,
+                loadingTitle: "Loading Templates",
+                loadingSystemImage: "square.stack.3d.up",
+                loadingDescription: "Preparing suggested templates and tomorrow's schedule.",
+                errorTitle: "Unable to Load Templates",
+                retry: store.reload
+            ) {
+                try store.templatesScreenModel()
+            } content: { model in
+                VStack(spacing: 0) {
+                    sectionPicker
 
-                    switch result {
-                    case let .success(model):
-                        VStack(spacing: 0) {
-                            sectionPicker
-
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 24) {
-                                    switch selectedSection {
-                                    case .suggested:
-                                        suggestedSection(model: model)
-                                    case .saved:
-                                        savedSection(model: model)
-                                    case .schedule:
-                                        scheduleSection(model: model)
-                                    }
-                                }
-                                .padding(.horizontal, 20)
-                                .padding(.top, 8)
-                                .padding(.bottom, 32)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 24) {
+                            switch selectedSection {
+                            case .suggested:
+                                suggestedSection(model: model)
+                            case .saved:
+                                savedSection(model: model)
+                            case .schedule:
+                                scheduleSection(model: model)
                             }
-                            .background(Color(uiColor: .systemGroupedBackground))
                         }
-                        .background(Color(uiColor: .systemGroupedBackground))
-
-                    case let .failure(error):
-                        RecoverableErrorView(
-                            title: "Unable to Load Templates",
-                            message: error.localizedDescription
-                        ) {
-                            store.reload()
-                        }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
+                        .padding(.bottom, 32)
                     }
+                    .background(Color(uiColor: .systemGroupedBackground))
                 }
+                .background(Color(uiColor: .systemGroupedBackground))
             }
             .navigationTitle("Templates")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .sheet(item: $saveSession) { session in
-            SaveTemplateSheet(sourceDate: session.sourceDate) { title in
-                store.saveSuggestedTemplate(from: session.sourceDate, title: title)
+        .sheet(item: $sheet) { sheet in
+            switch sheet {
+            case let .save(sourceDate):
+                SaveTemplateSheet(sourceDate: sourceDate) { title in
+                    store.saveSuggestedTemplate(from: sourceDate, title: title)
+                }
+
+            case let .edit(templateID):
+                if let template = store.savedTemplate(id: templateID) {
+                    TemplateEditorSheet(
+                        template: template,
+                        assignedWeekdays: store.assignedWeekdays(for: template.id),
+                        occupiedWeekdays: store.occupiedWeekdays(excluding: template.id)
+                    ) { title, blocks, assignedWeekdays in
+                        try store.saveEditedTemplate(
+                            template.id,
+                            title: title,
+                            blocks: blocks,
+                            assignedWeekdays: assignedWeekdays
+                        )
+                    } onDelete: {
+                        store.deleteSavedTemplate(template.id)
+                    }
+                }
             }
-        }
-        .sheet(item: $editingTemplate) { template in
-            TemplateEditorSheet(
-                template: template,
-                assignedWeekdays: store.assignedWeekdays(for: template.id),
-                occupiedWeekdays: store.occupiedWeekdays(excluding: template.id)
-            ) { title, blocks, assignedWeekdays in
-                try store.saveEditedTemplate(
-                    template.id,
-                    title: title,
-                    blocks: blocks,
-                    assignedWeekdays: assignedWeekdays
-                )
-            } onDelete: {
-                store.deleteSavedTemplate(template.id)
-            }
-        }
-        .task {
-            store.ensureMaterialized(for: LocalDay.today())
         }
     }
 
     private var sectionPicker: some View {
+        // Segmented control is a natural fit for a small number of peer sections.
         Picker("Section", selection: $selectedSection) {
             ForEach(TemplatesSection.allCases) { section in
                 Text(section.rawValue).tag(section)
@@ -117,7 +114,7 @@ struct TemplatesRootView: View {
         ForEach(slots) { slot in
             if let template = slot.template {
                 SuggestedTemplateCard(template: template) {
-                    saveSession = SaveTemplateSession(sourceDate: template.sourceDate)
+                    sheet = .save(sourceDate: template.sourceDate)
                 }
             } else {
                 SuggestedTemplateEmptyCard(date: slot.date)
@@ -147,7 +144,7 @@ struct TemplatesRootView: View {
                 SavedTemplateCard(
                     template: template,
                     isSelectedForTomorrow: model.tomorrowSchedule.finalTemplateID == template.id,
-                    onEdit: { openEditor(for: template.id) },
+                    onEdit: { sheet = .edit(templateID: template.id) },
                     onUseTomorrow: { store.setTomorrowOverride(templateID: template.id) }
                 )
             }
@@ -175,12 +172,12 @@ struct TemplatesRootView: View {
             .padding(.top, 8)
         } else {
             WeekdayRulesCard(
-                templates: store.document.savedTemplates,
+                templates: store.savedTemplates,
                 selectionForWeekday: weekdaySelection(for:)
             )
 
             TomorrowOverrideCard(
-                templates: store.document.savedTemplates,
+                templates: store.savedTemplates,
                 selection: tomorrowOverrideSelection
             )
         }
@@ -198,22 +195,18 @@ struct TemplatesRootView: View {
         }
     }
 
-    private func openEditor(for templateID: UUID) {
-        if let source = store.document.savedTemplates.first(where: { $0.id == templateID }) {
-            editingTemplate = source
-        }
-    }
-
     private func weekdaySelection(for weekday: Weekday) -> Binding<UUID?> {
+        // `Binding` is SwiftUI's two-way data conduit.
+        // This lets a child control read and write store state without owning it.
         Binding(
-            get: { store.document.weekdayRules.first(where: { $0.weekday == weekday })?.savedTemplateID },
+            get: { store.assignedTemplateID(for: weekday) },
             set: { store.assignWeekday(weekday, to: $0) }
         )
     }
 
     private var tomorrowOverrideSelection: Binding<UUID?> {
         Binding(
-            get: { store.document.overrides.first(where: { $0.date == LocalDay.today().adding(days: 1) })?.savedTemplateID },
+            get: { store.tomorrowOverrideTemplateID },
             set: { store.setTomorrowOverride(templateID: $0) }
         )
     }
@@ -488,9 +481,18 @@ private struct TomorrowOverrideCard: View {
     }
 }
 
-private struct SaveTemplateSession: Identifiable {
-    let id = UUID()
-    let sourceDate: LocalDay
+private enum TemplatesSheet: Identifiable {
+    case save(sourceDate: LocalDay)
+    case edit(templateID: UUID)
+
+    var id: String {
+        switch self {
+        case let .save(sourceDate):
+            return "save-\(sourceDate.description)"
+        case let .edit(templateID):
+            return "edit-\(templateID.uuidString)"
+        }
+    }
 }
 
 private struct SaveTemplateSheet: View {

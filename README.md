@@ -1061,18 +1061,11 @@ UI 层不应长期缓存：
 
 这些必须随时从核心层重新计算。
 
-### 11.9 UI 迁移方向
+### 11.9 当前 UI 架构
 
-当前仓库中的旧 UI 主要围绕以下概念构建：
+当前仓库已经统一围绕以下概念构建：
 
-- `StateItem`
-- `ChecklistItem`
-- `StateTemplate`
-- `RoutineTemplate`
-- `StateStreamManager`
-
-未来 UI 需要逐步迁移为围绕以下概念构建：
-
+- `ThingStructDocument`
 - `DayPlan`
 - `TimeBlock`
 - `TaskItem`
@@ -1081,25 +1074,20 @@ UI 层不应长期缓存：
 - `WeekdayTemplateRule`
 - `DateTemplateOverride`
 
-迁移原则：
+UI 分层原则：
 
-1. 先替换数据来源
-2. 再替换页面语义
-3. 最后删除旧模型和旧页面
+1. `ThingStructStore` 负责文档加载、物化、持久化和用户命令。
+2. `ThingStructPresentation` 负责把核心模型映射成 `Now`、`Today`、`Templates` 所需的 screen model。
+3. root view 只负责页面级状态、导航和 sheet，不重复实现核心推导。
 
-### 11.10 旧模型迁移约束
+### 11.10 当前模型约束
 
-旧模型与新核心模型不是一一同构关系，迁移时必须先承认信息落差。
+为了保持架构稳定，当前实现应继续遵守以下约束：
 
-约束：
-
-1. `ChecklistItem` 可以较直接地迁移为 `TaskItem`，或在模板场景下迁移为 `TaskBlueprint`。
-2. 旧 `StateItem` 只包含标题、日期、排序和 checklist，不包含层级、父子关系与时间定义，因此不能无损直接迁移为合法的 `TimeBlock`。
-3. 旧 `StateTemplate` 同样缺少时间与层级语义，因此不能无损直接迁移为完整的 `BlockTemplate`。
-4. 旧 `RoutineTemplate` 将“模板内容”和“按 weekday 自动应用规则”混在同一个对象里；迁移到新模型时必须拆分为 `SavedDayTemplate` 与可选的 `WeekdayTemplateRule`。
-5. 旧 `StateStreamManager` 只是旧架构下的生成协调器；迁移完成后，它不能继续作为业务真相来源，必须被 `DayPlan` 物化与候选模板窗口逻辑取代。
-6. 任何旧数据只有在成功转换并通过新核心层完整校验后，才能进入新的有效 `DayPlan` / 模板集合。
-7. 任何无法确定性映射为合法新模型的旧记录，都不能被静默注入核心层；后续要么显式降级处理，要么保留在迁移隔离层。
+1. `DayPlan` 与模板集合是唯一业务真相来源，UI 不维护并行状态副本。
+2. `BlankBaseBlock`、active chain、detail model、template summary 都必须在核心层或 presentation 层临时推导，而不是被 UI 长期缓存。
+3. root view 可以持有局部 presentation state，例如选中的分段、当前 sheet、编辑草稿，但不直接承担规则计算。
+4. 对未来日期的模板变更只影响重新物化或显式 regenerate 的 day plan；已经存在的日计划继续作为快照保留。
 
 ## 12. 当前阶段不实现的 UI 与平台集成
 

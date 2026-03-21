@@ -1,53 +1,45 @@
 import SwiftUI
 
+// `NowRootView` renders a live "what matters right now?" screen.
+//
+// Two important SwiftUI ideas show up here:
+// 1. The view itself stays declarative: it asks the store for a `NowScreenModel`
+//    and renders that model.
+// 2. `TimelineView` periodically re-evaluates the body so the screen can react to time.
 struct NowRootView: View {
     @Environment(ThingStructStore.self) private var store
 
     var body: some View {
         NavigationStack {
-            Group {
-                if !store.isLoaded {
-                    ScreenLoadingView(
-                        title: "Loading Now",
-                        systemImage: "clock",
-                        description: "Refreshing your active block and task chain."
-                    )
-                } else {
-                    TimelineView(.periodic(from: .now, by: 60)) { context in
-                        let localDay = LocalDay(date: context.date)
-                        let result = Result { try store.nowScreenModel(at: context.date) }
-
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 20) {
-                                switch result {
-                                case let .success(model):
-                                    NowNotesSectionView(sections: model.noteSections)
-                                    NowTasksSectionView(
-                                        sections: model.taskSections,
-                                        statusMessage: model.statusMessage,
-                                        activeChain: model.activeChain
-                                    ) { blockID, taskID in
-                                        store.toggleTask(on: model.date, blockID: blockID, taskID: taskID)
-                                    }
-
-                                case let .failure(error):
-                                    RecoverableErrorView(
-                                        title: "Unable to Load Now",
-                                        message: error.localizedDescription
-                                    ) {
-                                        store.reload()
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 20)
-                            .padding(.top, 16)
-                            .padding(.bottom, 28)
-                        }
-                        .navigationTitle(localDay.nowNavigationTitle)
-                        .task(id: localDay) {
-                            store.ensureMaterialized(for: localDay)
-                        }
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                // Every minute, `TimelineView` re-runs this subtree with a new `context.date`.
+                RootScreenContainer(
+                    isLoaded: store.isLoaded,
+                    loadingTitle: "Loading Now",
+                    loadingSystemImage: "clock",
+                    loadingDescription: "Refreshing your active block and task chain.",
+                    errorTitle: "Unable to Load Now",
+                    retry: store.reload,
+                    load: {
+                        try store.nowScreenModel(at: context.date)
                     }
+                ) { model in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            NowNotesSectionView(sections: model.noteSections)
+                            NowTasksSectionView(
+                                sections: model.taskSections,
+                                statusMessage: model.statusMessage,
+                                activeChain: model.activeChain
+                            ) { blockID, taskID in
+                                store.toggleTask(on: model.date, blockID: blockID, taskID: taskID)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 16)
+                        .padding(.bottom, 28)
+                    }
+                    .navigationTitle(model.date.nowNavigationTitle)
                 }
             }
             .navigationTitle(LocalDay.today().nowNavigationTitle)
@@ -60,6 +52,8 @@ private struct NowNotesSectionView: View {
     let sections: [NowNoteSection]
 
     var body: some View {
+        // SwiftUI encourages composing many tiny views like this.
+        // Think of them as cheap rendering functions with local structure.
         if !sections.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Notes")
@@ -105,6 +99,8 @@ private struct NowTasksSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // The task section is intentionally derived from a presentation model,
+            // not from raw `TimeBlock` values, so it can focus purely on rendering.
             HStack(alignment: .firstTextBaseline) {
                 Text("Tasks")
                     .font(.title2.weight(.semibold))

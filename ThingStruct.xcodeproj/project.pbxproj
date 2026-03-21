@@ -9,6 +9,7 @@
 /* Begin PBXFileReference section */
 		2735FB492F6B9E8500E0B4AD /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		2766195A2EF2562D00A74A6B /* ThingStruct.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ThingStruct.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9A4D4F3A1B2C3D4E5F607182 /* Design.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = Design.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -30,6 +31,11 @@
 			path = ThingStruct;
 			sourceTree = "<group>";
 		};
+		9A4D4F3A1B2C3D4E5F607181 /* Tests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Tests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,7 +53,9 @@
 			isa = PBXGroup;
 			children = (
 				2735FB492F6B9E8500E0B4AD /* README.md */,
+				9A4D4F3A1B2C3D4E5F607182 /* Design.md */,
 				2766195C2EF2562D00A74A6B /* ThingStruct */,
+				9A4D4F3A1B2C3D4E5F607181 /* Tests */,
 				2766195B2EF2562D00A74A6B /* Products */,
 			);
 			sourceTree = "<group>";

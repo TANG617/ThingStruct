@@ -1,5 +1,11 @@
 import SwiftUI
 
+// `TemplateEditorSheet` is a form for editing a saved template in isolation.
+//
+// Notice the separation of concerns:
+// - local `@State` holds mutable form inputs
+// - `onSave` / `onDelete` are injected commands from the parent/store
+// - validation and preview run locally against the current draft
 struct TemplateEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -8,6 +14,8 @@ struct TemplateEditorSheet: View {
     let onSave: (String, [BlockTemplate], Set<Weekday>) throws -> Void
     let onDelete: () -> Void
 
+    // These `@State` properties are the editable "working copy".
+    // The saved template is not mutated until the user taps Save.
     @State private var title: String
     @State private var assignedWeekdays: Set<Weekday>
     @State private var blocks: [BlockTemplate]
@@ -22,6 +30,8 @@ struct TemplateEditorSheet: View {
         onSave: @escaping (String, [BlockTemplate], Set<Weekday>) throws -> Void,
         onDelete: @escaping () -> Void
     ) {
+        // Custom init is how a SwiftUI view seeds its `@State` working copy from
+        // incoming model values exactly once at creation time.
         self.template = template
         self.occupiedWeekdays = occupiedWeekdays
         self.onSave = onSave
@@ -33,6 +43,8 @@ struct TemplateEditorSheet: View {
 
     var body: some View {
         NavigationStack {
+            // `List` is flexible enough to mix editable rows, summaries, and buttons
+            // in one native scrolling container.
             List {
                 Section("Title") {
                     TextField("Template Title", text: $title)
@@ -134,6 +146,8 @@ struct TemplateEditorSheet: View {
             }
         }
         .sheet(item: $editorSession) { session in
+            // Reusing `BlockEditorSheet` keeps template editing and day-plan editing
+            // on the same mental model.
             BlockEditorSheet(title: session.title, draft: session.draft) { draft in
                 apply(draft)
             }
@@ -155,10 +169,13 @@ struct TemplateEditorSheet: View {
     }
 
     private var previewDayPlan: DayPlan {
+        // Preview is built from the current unsaved template draft.
         (try? TemplateEngine.previewDayPlan(from: currentTemplate)) ?? DayPlan(date: LocalDay(year: 2001, month: 1, day: 1))
     }
 
     private var displayEntries: [TemplateBlockDisplayEntry] {
+        // If the template currently validates, we sort by resolved time so the list
+        // matches the eventual instantiated order. Otherwise we fall back to a simpler sort.
         if let preview = try? TemplateEngine.previewDayPlan(from: currentTemplate) {
             let previewByID = Dictionary(uniqueKeysWithValues: preview.blocks.map { ($0.id, $0) })
             return blocks
@@ -176,6 +193,8 @@ struct TemplateEditorSheet: View {
                     return lhs.id.uuidString < rhs.id.uuidString
                 }
                 .map { block in
+                    // Pair the authored template block with its preview-resolved clock range
+                    // so the row can explain both the definition and the eventual outcome.
                     let resolvedBlock = previewByID[block.id]
                     return TemplateBlockDisplayEntry(
                         block: block,
@@ -203,6 +222,7 @@ struct TemplateEditorSheet: View {
     }
 
     private var currentTemplate: SavedDayTemplate {
+        // This computed value turns the local editing state back into a domain template value.
         SavedDayTemplate(
             id: template.id,
             title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? template.title : title,
@@ -228,6 +248,7 @@ struct TemplateEditorSheet: View {
     }
 
     private func apply(_ draft: BlockDraft) {
+        // Interpret the generic draft in template-editing terms and update the local array.
         switch draft.mode {
         case .createBase:
             blocks.append(makeTemplateBlock(from: draft, id: UUID(), parentBlockID: nil, layerIndex: 0))
@@ -257,6 +278,7 @@ struct TemplateEditorSheet: View {
     }
 
     private func deleteBlockCascade(_ blockID: UUID) {
+        // Blocks are stored flat, so deleting a subtree means doing our own graph walk.
         let childrenByParent = Dictionary(grouping: blocks, by: \.parentTemplateBlockID)
         var pending = [blockID]
         var deleted: Set<UUID> = []
@@ -271,6 +293,7 @@ struct TemplateEditorSheet: View {
     }
 
     private func validateDraft() {
+        // Re-run the real engine so the editor's validation exactly matches runtime behavior.
         do {
             _ = try TemplateEngine.previewDayPlan(from: currentTemplate)
             validationMessage = nil
@@ -285,6 +308,8 @@ struct TemplateEditorSheet: View {
         parentBlockID: UUID?,
         layerIndex: Int
     ) -> BlockTemplate {
+        // Template-side conversion mirrors `BlockDraft.makeBlock(dayPlanID:)`, but the
+        // destination type is `BlockTemplate` instead of a concrete day-plan block.
         BlockTemplate(
             id: id,
             parentTemplateBlockID: parentBlockID,

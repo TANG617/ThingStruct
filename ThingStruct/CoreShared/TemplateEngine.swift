@@ -1,10 +1,18 @@
 import Foundation
 
+// `TemplateEngine` owns all template-centric business rules:
+// - deriving suggested templates from recent day plans
+// - choosing which saved template applies to a date
+// - instantiating / regenerating day plans from templates
+// - updating saved templates and their scheduling rules
+//
+// This separation keeps template logic out of SwiftUI and out of the day-plan engine.
 public enum TemplateEngine {
     public static func previewDayPlan(
         from savedTemplate: SavedDayTemplate,
         on date: LocalDay = LocalDay(year: 2001, month: 1, day: 1)
     ) throws -> DayPlan {
+        // Previewing a template is just "instantiate it on a throwaway date".
         try instantiateDayPlan(
             from: savedTemplate,
             for: date,
@@ -16,6 +24,7 @@ public enum TemplateEngine {
         referenceDay: LocalDay,
         from dayPlans: [DayPlan]
     ) throws -> [SuggestedDayTemplate] {
+        // Look back over a fixed 3-day window. The UI expects this exact shape.
         var dayPlansByDate: [LocalDay: DayPlan] = [:]
 
         for dayPlan in dayPlans {
@@ -41,6 +50,8 @@ public enum TemplateEngine {
         title: String,
         createdAt: Date = Date()
     ) -> SavedDayTemplate {
+        // We deep-copy blocks so future edits to the saved template cannot mutate
+        // the historical suggested template summary.
         let copiedBlocks = deepCopy(blocks: suggestedTemplate.blocks)
         return SavedDayTemplate(
             title: title,
@@ -57,6 +68,7 @@ public enum TemplateEngine {
         weekdayRules: [WeekdayTemplateRule],
         overrides: [DateTemplateOverride]
     ) throws -> SavedDayTemplate? {
+        // Date override wins over weekday rule. This priority is a core product rule.
         let templateByID = Dictionary(uniqueKeysWithValues: savedTemplates.map { ($0.id, $0) })
 
         var overrideByDate: [LocalDay: UUID] = [:]
@@ -75,6 +87,7 @@ public enum TemplateEngine {
 
         var ruleByWeekday: [Weekday: UUID] = [:]
         for rule in weekdayRules {
+            // A weekday schedule is a 1-to-1 mapping: one weekday, one selected template.
             if ruleByWeekday.updateValue(rule.savedTemplateID, forKey: rule.weekday) != nil {
                 throw ThingStructCoreError.duplicateWeekdayRule(rule.weekday)
             }
@@ -96,9 +109,12 @@ public enum TemplateEngine {
         dayPlanID: UUID = UUID(),
         generatedAt: Date = Date()
     ) throws -> DayPlan {
+        // Template block IDs must not leak into concrete day plans.
+        // We create a fresh ID map so instantiated blocks are independent objects.
         var blockIDMap: [UUID: UUID] = [:]
 
         for block in savedTemplate.blocks {
+            // Every instantiated block gets a fresh identity while preserving graph shape.
             blockIDMap[block.id] = UUID()
         }
 
@@ -109,6 +125,7 @@ public enum TemplateEngine {
 
             let parentBlockID: UUID?
             if let parentTemplateBlockID = blockTemplate.parentTemplateBlockID {
+                // Parent references must be translated through the same remap.
                 guard let mappedParentID = blockIDMap[parentTemplateBlockID] else {
                     throw ThingStructCoreError.missingTemplateParent(
                         blockID: blockTemplate.id,
@@ -128,6 +145,7 @@ public enum TemplateEngine {
                     return lhs.id.uuidString < rhs.id.uuidString
                 }
                 .map { blueprint in
+                    // Task blueprints become incomplete task instances on each materialized day.
                     TaskItem(
                         title: blueprint.title,
                         order: blueprint.order,
@@ -167,6 +185,7 @@ public enum TemplateEngine {
         overrides: [DateTemplateOverride],
         generatedAt: Date = Date()
     ) throws -> DayPlan {
+        // If a plan already exists, it is treated as the source of truth.
         if let existingPlan = try uniqueDayPlan(for: date, in: existingDayPlans) {
             return existingPlan
         }
@@ -177,6 +196,7 @@ public enum TemplateEngine {
             weekdayRules: weekdayRules,
             overrides: overrides
         ) else {
+            // "No matching template" is a valid state, not an error.
             return DayPlan(
                 date: date,
                 sourceSavedTemplateID: nil,
@@ -202,6 +222,7 @@ public enum TemplateEngine {
         overrides: [DateTemplateOverride],
         generatedAt: Date = Date()
     ) throws -> DayPlan {
+        // Regeneration is intentionally conservative because it can overwrite user-visible plans.
         guard date > today else {
             throw ThingStructCoreError.regenerationNotAllowedForNonFutureDate(date)
         }
@@ -250,6 +271,8 @@ public enum TemplateEngine {
         in document: ThingStructDocument,
         updatedAt: Date = Date()
     ) throws -> ThingStructDocument {
+        // Updating a saved template is modeled as a pure transformation:
+        // input document -> output document.
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else {
             throw ThingStructCoreError.emptyTemplateTitle
@@ -268,6 +291,8 @@ public enum TemplateEngine {
         _ = try previewDayPlan(from: updatedTemplate)
 
         updatedDocument.savedTemplates[templateIndex] = updatedTemplate
+        // Normalize weekday ownership by removing both the template's previous rules and
+        // any conflicting rules for weekdays newly claimed by this template.
         updatedDocument.weekdayRules.removeAll {
             $0.savedTemplateID == templateID || assignedWeekdays.contains($0.weekday)
         }
@@ -298,6 +323,7 @@ public enum TemplateEngine {
     }
 
     private static func suggestedTemplate(from dayPlan: DayPlan) throws -> SuggestedDayTemplate? {
+        // Suggestions are learned from real user-visible blocks only.
         let resolvedPlan = try DayPlanEngine.resolved(dayPlan)
         let activeBlocks = resolvedPlan.blocks.filter { !$0.isCancelled && !$0.isBlankBaseBlock }
 
@@ -330,6 +356,7 @@ public enum TemplateEngine {
         for date: LocalDay,
         in dayPlans: [DayPlan]
     ) throws -> DayPlan? {
+        // Keeps the "at most one plan per date" invariant explicit.
         let matchingPlans = dayPlans.filter { $0.date == date }
 
         if matchingPlans.count > 1 {
@@ -340,6 +367,8 @@ public enum TemplateEngine {
     }
 
     private static func deepCopy(blocks: [BlockTemplate]) -> [BlockTemplate] {
+        // Value copying alone would preserve logical IDs. We intentionally create a new
+        // identity graph so saved templates and suggested templates stay independent.
         var blockIDMap: [UUID: UUID] = [:]
         for block in blocks {
             blockIDMap[block.id] = UUID()
@@ -363,6 +392,7 @@ public enum TemplateEngine {
     }
 
     private static func normalized(blocks: [BlockTemplate]) -> [BlockTemplate] {
+        // Persist contiguous task order values so later sorting reflects the current UI order.
         blocks.map { block in
             var updatedBlock = block
             updatedBlock.taskBlueprints = block.taskBlueprints.enumerated().map { index, blueprint in

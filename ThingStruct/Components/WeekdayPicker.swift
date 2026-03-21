@@ -1,5 +1,9 @@
 import SwiftUI
 
+// Small reusable control for selecting weekdays while respecting "locked" weekdays.
+// This is a good example of a custom SwiftUI control:
+// - parent owns the state (`@Binding`)
+// - child renders that state and emits user intent (`onTap`)
 struct WeekdayPicker: View {
     @Binding var selectedDays: Set<Weekday>
     let occupiedDays: Set<Weekday>
@@ -23,6 +27,7 @@ struct WeekdayPicker: View {
     }
 
     private func toggleDay(_ day: Weekday) {
+        // Explicit animation is opt-in in SwiftUI.
         withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
             if selectedDays.contains(day) {
                 selectedDays.remove(day)
@@ -41,6 +46,8 @@ struct WeekdayButton: View {
 
     var body: some View {
         Button(action: onTap) {
+            // The button's visual appearance is entirely derived from state.
+            // There is no imperative "set selected background color" step.
             HStack(spacing: 6) {
                 Text(day.shortName)
                     .font(.subheadline.weight(.semibold))

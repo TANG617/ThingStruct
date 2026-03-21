@@ -2,6 +2,8 @@ import Foundation
 import SwiftUI
 import UIKit
 
+// Small formatting helpers often live in shared files like this in SwiftUI projects.
+// The goal is to keep domain logic elsewhere and put display-only helpers here.
 extension Int {
     var formattedTime: String {
         let hour = self / 60
@@ -47,10 +49,14 @@ struct LayerVisualStyle {
     let badgeForeground: Color
 
     static func forBlock(layerIndex: Int, isBlank: Bool) -> LayerVisualStyle {
+        // Blank blocks deliberately use a neutral palette so user-defined blocks
+        // carry the stronger visual hierarchy.
         if isBlank {
             return blank
         }
 
+        // Higher layers reuse the same hue family with deeper shades.
+        // This is easier to read than assigning unrelated colors to each layer.
         let depth = max(0, min(layerIndex, palette.count - 1))
         return palette[depth]
     }
@@ -218,6 +224,8 @@ private struct RGBColor {
 
 private extension Color {
     static func adaptive(light: RGBColor, dark: RGBColor, alpha: CGFloat = 1) -> Color {
+        // UIKit still exposes the most direct API for trait-aware dynamic colors.
+        // SwiftUI `Color` is then created from the UIKit color.
         Color(
             uiColor: UIColor { traits in
                 let palette = traits.userInterfaceStyle == .dark ? dark : light
@@ -277,6 +285,47 @@ struct RecoverableErrorView: View {
     }
 }
 
+// Many root screens in the app follow the same control flow:
+// 1. Show a loading placeholder before the store is ready.
+// 2. Try to build a screen model.
+// 3. Show either the screen content or a recoverable error.
+//
+// This shared wrapper keeps that pattern consistent across tabs.
+struct RootScreenContainer<Value, Content: View>: View {
+    let isLoaded: Bool
+    let loadingTitle: String
+    let loadingSystemImage: String
+    let loadingDescription: String
+    let errorTitle: String
+    let retry: () -> Void
+    let load: () throws -> Value
+    @ViewBuilder let content: (Value) -> Content
+
+    var body: some View {
+        Group {
+            if !isLoaded {
+                ScreenLoadingView(
+                    title: loadingTitle,
+                    systemImage: loadingSystemImage,
+                    description: loadingDescription
+                )
+            } else {
+                switch Result(catching: load) {
+                case let .success(value):
+                    content(value)
+
+                case let .failure(error):
+                    RecoverableErrorView(
+                        title: errorTitle,
+                        message: error.localizedDescription,
+                        retry: retry
+                    )
+                }
+            }
+        }
+    }
+}
+
 #Preview("Loading State") {
     ScreenLoadingView(
         title: "Loading Today",
@@ -290,6 +339,22 @@ struct RecoverableErrorView: View {
         title: "Unable to Load Templates",
         message: "The preview is simulating a recoverable state."
     ) {}
+}
+
+#Preview("Root Screen Container") {
+    RootScreenContainer(
+        isLoaded: true,
+        loadingTitle: "Loading",
+        loadingSystemImage: "clock",
+        loadingDescription: "Previewing a shared screen wrapper.",
+        errorTitle: "Error",
+        retry: {}
+    ) {
+        "Preview"
+    } content: { value in
+        Text(value)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }
 
 #Preview("Layer Palette") {

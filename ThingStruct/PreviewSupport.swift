@@ -1,5 +1,8 @@
 import Foundation
 
+// SwiftUI previews are much more useful when they can boot realistic app state quickly.
+// This helper centralizes preview-only factories so production files do not need to
+// contain mock-building code inline.
 @MainActor
 enum PreviewSupport {
     static var referenceDay: LocalDay {
@@ -24,21 +27,26 @@ enum PreviewSupport {
         lastErrorMessage: String? = nil
     ) -> ThingStructStore {
         let day = selectedDate ?? referenceDay
-        let persistence = ThingStructDocumentPersistence(
+        // Each preview gets its own temporary file URL so previews do not interfere
+        // with one another or with the real app document.
+        let documentStore = ThingStructDocumentStore(
             fileURL: FileManager.default.temporaryDirectory
                 .appending(path: "ThingStructPreview")
                 .appending(path: "\(UUID().uuidString).json")
         )
-        let store = ThingStructStore(persistence: persistence)
+        let store = ThingStructStore(documentStore: documentStore)
         store.selectedTab = tab
         store.selectedDate = day
-        store.lastErrorMessage = lastErrorMessage
 
         if loaded {
             store.document = document ?? seededDocument(on: day)
             store.isLoaded = true
             store.ensureMaterialized(for: day)
             store.selectedBlockID = selectedBlockID
+        }
+
+        if let lastErrorMessage {
+            store.presentErrorMessage(lastErrorMessage)
         }
 
         return store
@@ -48,6 +56,8 @@ enum PreviewSupport {
         document: ThingStructDocument? = nil,
         minuteOfDay: Int = 9 * 60 + 30
     ) -> NowScreenModel {
+        // These helpers skip the UI store entirely and ask the presentation layer directly.
+        // That makes previews good for validating pure view layout.
         let day = referenceDay
         return try! ThingStructPresentation.nowScreenModel(
             document: document ?? seededDocument(on: day),

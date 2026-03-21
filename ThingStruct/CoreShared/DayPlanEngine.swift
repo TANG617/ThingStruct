@@ -1,17 +1,32 @@
 import Foundation
 
+// `DayPlanEngine` owns the rules for validating and resolving a day plan.
+//
+// This is the most algorithm-heavy file in the project.
+// A good C++ analogy is "the deterministic rules engine over a graph/tree of blocks".
+//
+// Responsibilities include:
+// - validating structure (parents, layers, cycles)
+// - resolving absolute time ranges for relative overlays
+// - generating runtime blank blocks
+// - computing active selection
+// - enforcing safe edits such as cancel / resize
 public enum DayPlanEngine {
     public static func validate(_ plan: DayPlan) throws {
+        // Validation is defined in terms of successful resolution.
         _ = try resolved(plan)
     }
 
     public static func resolved(_ plan: DayPlan) throws -> DayPlan {
+        // Runtime-only blank blocks are never part of the persisted truth.
+        // We strip them before running structural validation/resolution.
         let persistedPlan = strippedRuntimeBlocks(from: plan)
         let resolvedRanges = try resolveRanges(in: persistedPlan)
 
         var resolvedPlan = persistedPlan
         resolvedPlan.blocks = persistedPlan.blocks.map { block in
             var updatedBlock = block
+            // The engine computes and stores resolved start/end on each block for convenience.
             if let range = resolvedRanges[block.id] {
                 updatedBlock.resolvedStartMinuteOfDay = range.start
                 updatedBlock.resolvedEndMinuteOfDay = range.end
@@ -26,6 +41,9 @@ public enum DayPlanEngine {
     }
 
     public static func runtimeResolved(_ plan: DayPlan) throws -> DayPlan {
+        // Blank base blocks are synthesized only for runtime presentation.
+        // They fill gaps between user blocks so the timeline and active-selection logic
+        // can treat the whole day as covered.
         let resolvedPlan = try resolved(plan)
         var runtimePlan = resolvedPlan
         runtimePlan.blocks.append(contentsOf: makeBlankBaseBlocks(in: resolvedPlan))
@@ -33,6 +51,9 @@ public enum DayPlanEngine {
     }
 
     public static func cancelBlock(_ blockID: UUID, in plan: DayPlan) throws -> DayPlan {
+        // "Cancel" does more than flipping a flag:
+        // direct children get hoisted up one level, descendants shift layers,
+        // and the final result must preserve legal time ranges.
         let resolvedPlan = try resolved(plan)
         guard let target = resolvedPlan.blocks.first(where: { $0.id == blockID }) else {
             throw ThingStructCoreError.missingBlock(blockID)
@@ -99,6 +120,8 @@ public enum DayPlanEngine {
     }
 
     public static func resizeBounds(for blockID: UUID, in plan: DayPlan) throws -> BlockResizeBounds {
+        // The UI asks this function "what start/end range is legal before I even drag?"
+        // Returning bounds keeps gesture code simple and keeps rules centralized.
         let resolvedPlan = try resolved(plan)
         let activeBlocks = resolvedPlan.blocks.filter { !$0.isCancelled }
 
@@ -164,7 +187,8 @@ public enum DayPlanEngine {
         let minimumEnd = rawMinimumEnd.roundedUp(toStep: 5)
         let maximumEnd = rawMaximumEnd.roundedDown(toStep: 5)
 
-        let rawMinimumStart = max(previousSiblingEnd ?? parentStart(for: target, in: activeBlocks), parentStart(for: target, in: activeBlocks))
+        let resolvedParentStart = parentStart(for: target, in: activeBlocks)
+        let rawMinimumStart = max(previousSiblingEnd ?? resolvedParentStart, resolvedParentStart)
         let rawMaximumStart = resolvedEnd - 5
         let minimumStart = rawMinimumStart.roundedUp(toStep: 5)
         let maximumStart = rawMaximumStart.roundedDown(toStep: 5)
@@ -192,6 +216,8 @@ public enum DayPlanEngine {
 
         let validStartCandidates = Array(stride(from: minimumStart, through: maximumStart, by: 5))
             .filter { candidate in
+                // Some starts are numerically in range but still illegal because they would
+                // invalidate descendant overlays. We filter those out here.
                 (try? candidateStartPreservesResolvedEnd(
                     candidate,
                     for: target,
@@ -219,6 +245,8 @@ public enum DayPlanEngine {
         in plan: DayPlan,
         proposedStartMinuteOfDay: Int
     ) throws -> DayPlan {
+        // Editing operations return a brand-new `DayPlan` value.
+        // This keeps the engine functional and easy to test.
         let bounds = try resizeBounds(for: blockID, in: plan)
         let alignedStart = proposedStartMinuteOfDay.aligned(
             toStep: 5,
@@ -235,29 +263,12 @@ public enum DayPlanEngine {
             throw ThingStructCoreError.invalidResolvedRange(blockID: blockID, start: -1, end: -1)
         }
 
-        switch currentBlock.timing {
-        case let .absolute(_, requestedEndMinuteOfDay):
-            updatedPlan.blocks[blockIndex].timing = .absolute(
-                startMinuteOfDay: alignedStart,
-                requestedEndMinuteOfDay: requestedEndMinuteOfDay
-            )
-
-        case .relative:
-            guard let parentBlockID = currentBlock.parentBlockID else {
-                throw ThingStructCoreError.baseBlockMustUseAbsoluteTiming(blockID)
-            }
-            guard
-                let parent = updatedPlan.blocks.first(where: { $0.id == parentBlockID }),
-                let parentStart = parent.resolvedStartMinuteOfDay
-            else {
-                throw ThingStructCoreError.missingParent(blockID: blockID, parentID: parentBlockID)
-            }
-
-            updatedPlan.blocks[blockIndex].timing = .relative(
-                startOffsetMinutes: alignedStart - parentStart,
-                requestedDurationMinutes: max(resolvedEnd - alignedStart, 5)
-            )
-        }
+        updatedPlan.blocks[blockIndex].timing = try timingByMovingStart(
+            of: currentBlock,
+            to: alignedStart,
+            preservingResolvedEndMinuteOfDay: resolvedEnd,
+            activeBlocks: updatedPlan.blocks.filter { !$0.isCancelled }
+        )
 
         updatedPlan.blocks[blockIndex].resolvedStartMinuteOfDay = nil
         updatedPlan.blocks[blockIndex].resolvedEndMinuteOfDay = nil
@@ -316,6 +327,8 @@ public enum DayPlanEngine {
                 return start <= minuteOfDay && minuteOfDay < end
             }
             .sorted { lhs, rhs in
+                // Sorting outermost-to-innermost lets the resulting array behave like
+                // a chain from base block to deepest overlay.
                 if lhs.layerIndex != rhs.layerIndex {
                     return lhs.layerIndex < rhs.layerIndex
                 }
@@ -344,6 +357,7 @@ public enum DayPlanEngine {
     }
 
     private static func strippedRuntimeBlocks(from plan: DayPlan) -> DayPlan {
+        // Runtime blank blocks are presentation artifacts, not durable business data.
         var sanitized = plan
         sanitized.blocks = plan.blocks.filter { !$0.isBlankBaseBlock }
         return sanitized
@@ -353,6 +367,8 @@ public enum DayPlanEngine {
         var allBlocksByID: [UUID: TimeBlock] = [:]
 
         for block in plan.blocks {
+            // Many later steps rely on dictionary lookups by ID, so duplicate IDs would
+            // make the whole structure ambiguous.
             if allBlocksByID.updateValue(block, forKey: block.id) != nil {
                 throw ThingStructCoreError.duplicateBlockID(block.id)
             }
@@ -363,6 +379,8 @@ public enum DayPlanEngine {
         var childrenByParent: [UUID?: [UUID]] = [:]
 
         for block in activeBlocks {
+            // The persisted model is a flat array, so we enforce the tree invariant here:
+            // root blocks have no parent, overlays must have a parent.
             if block.layerIndex == 0, block.parentBlockID != nil {
                 throw ThingStructCoreError.invalidRootBlock(block.id)
             }
@@ -382,6 +400,7 @@ public enum DayPlanEngine {
 
         for block in activeBlocks {
             if block.layerIndex == 0 {
+                // A base block anchors the day on the absolute clock.
                 if case .relative = block.timing {
                     throw ThingStructCoreError.baseBlockMustUseAbsoluteTiming(block.id)
                 }
@@ -413,6 +432,8 @@ public enum DayPlanEngine {
         in activeBlocks: [TimeBlock],
         activeBlocksByID: [UUID: TimeBlock]
     ) throws {
+        // Because each block has at most one parent, cycle detection can be implemented
+        // as a simple repeated walk up the ancestor chain.
         for block in activeBlocks {
             var visited: Set<UUID> = [block.id]
             var currentParentID = block.parentBlockID
@@ -433,6 +454,8 @@ public enum DayPlanEngine {
         childrenByParent: [UUID?: [UUID]],
         resolvedRanges: inout [UUID: (start: Int, end: Int)]
     ) throws {
+        // Recursive resolution works one sibling group at a time:
+        // calculate starts, clamp ends, store results, then recurse into each child subtree.
         let childIDs = childrenByParent[parentID] ?? []
         if childIDs.isEmpty {
             return
@@ -456,6 +479,8 @@ public enum DayPlanEngine {
             return try initialSiblingState(for: block, parentID: parentID, parentRange: parentRange)
         }
         .sorted { lhs, rhs in
+            // Stable sibling ordering matters because the next sibling's start can cap
+            // the current sibling's resolved end.
             if lhs.start != rhs.start {
                 return lhs.start < rhs.start
             }
@@ -483,6 +508,7 @@ public enum DayPlanEngine {
             let resolvedStart = sibling.start
 
             if let parentRange {
+                // A child must resolve entirely inside its parent's already-resolved range.
                 if resolvedStart < parentRange.start || resolvedStart >= parentRange.end {
                     throw ThingStructCoreError.blockOutsideParent(
                         blockID: sibling.block.id,
@@ -517,6 +543,8 @@ public enum DayPlanEngine {
         parentID: UUID?,
         parentRange: (start: Int, end: Int)?
     ) throws -> ResolvedSibling {
+        // Normalize the two timing modes into one common intermediate representation
+        // that the sibling resolver can reason about uniformly.
         switch block.timing {
         case let .absolute(startMinuteOfDay, requestedEndMinuteOfDay):
             guard (0 ..< 24 * 60).contains(startMinuteOfDay) else {
@@ -562,6 +590,8 @@ public enum DayPlanEngine {
     }
 
     private static func makeBlankBaseBlocks(in plan: DayPlan) -> [TimeBlock] {
+        // Blank base blocks explicitly represent gaps between real base blocks so UI code
+        // can render and select open time just like any other interval.
         let resolvedBaseBlocks = plan.blocks
             .filter { !$0.isCancelled && $0.layerIndex == 0 }
             .sorted { lhs, rhs in
@@ -616,6 +646,8 @@ public enum DayPlanEngine {
     }
 
     private static func resolvedRangeMap(from blocks: [TimeBlock]) throws -> [UUID: (start: Int, end: Int)] {
+        // Capture a before-snapshot so we can prove unrelated blocks keep their intervals
+        // after structural edits like cancel.
         var ranges: [UUID: (start: Int, end: Int)] = [:]
 
         for block in blocks where !block.isCancelled {
@@ -636,6 +668,8 @@ public enum DayPlanEngine {
         in plan: DayPlan,
         originalRanges: [UUID: (start: Int, end: Int)]
     ) throws {
+        // Hoisting children after cancel can create new siblings. We check those groups
+        // against the original ranges before accepting the edit.
         let survivingBlocks = plan.blocks.filter { !$0.isCancelled }
         let groupedBlocks = Dictionary(grouping: survivingBlocks) { block in
             ParentLayerKey(parentID: block.parentBlockID, layerIndex: block.layerIndex)
@@ -679,6 +713,7 @@ public enum DayPlanEngine {
         against originalRanges: [UUID: (start: Int, end: Int)],
         excluding excludedIDs: Set<UUID>
     ) throws {
+        // Except for the cancelled subtree itself, cancel should not move anyone else.
         for block in plan.blocks where !block.isCancelled && !excludedIDs.contains(block.id) {
             guard let expectedRange = originalRanges[block.id] else {
                 continue
@@ -704,6 +739,7 @@ public enum DayPlanEngine {
     }
 
     private static func buildChildrenMap(from blocks: [TimeBlock]) -> [UUID: [UUID]] {
+        // Repeated graph algorithms are simpler against a parent->children index.
         var childrenByParent: [UUID: [UUID]] = [:]
 
         for block in blocks where !block.isCancelled {
@@ -716,6 +752,7 @@ public enum DayPlanEngine {
     }
 
     private static func parentStart(for block: TimeBlock, in activeBlocks: [TimeBlock]) -> Int {
+        // Root blocks resolve against midnight, so their implicit parent start is 0.
         guard let parentBlockID = block.parentBlockID else {
             return 0
         }
@@ -725,12 +762,47 @@ public enum DayPlanEngine {
             .resolvedStartMinuteOfDay ?? 0
     }
 
+    private static func timingByMovingStart(
+        of block: TimeBlock,
+        to startMinuteOfDay: Int,
+        preservingResolvedEndMinuteOfDay resolvedEndMinuteOfDay: Int,
+        activeBlocks: [TimeBlock]
+    ) throws -> TimeBlockTiming {
+        // Gesture code thinks in resolved absolute minutes, but persistence preserves
+        // whether a block was authored as absolute or relative timing.
+        switch block.timing {
+        case let .absolute(_, requestedEndMinuteOfDay):
+            return .absolute(
+                startMinuteOfDay: startMinuteOfDay,
+                requestedEndMinuteOfDay: requestedEndMinuteOfDay
+            )
+
+        case .relative:
+            guard let parentBlockID = block.parentBlockID else {
+                throw ThingStructCoreError.baseBlockMustUseAbsoluteTiming(block.id)
+            }
+            guard
+                let parent = activeBlocks.first(where: { $0.id == parentBlockID }),
+                let parentStart = parent.resolvedStartMinuteOfDay
+            else {
+                throw ThingStructCoreError.missingParent(blockID: block.id, parentID: parentBlockID)
+            }
+
+            return .relative(
+                startOffsetMinutes: startMinuteOfDay - parentStart,
+                requestedDurationMinutes: max(resolvedEndMinuteOfDay - startMinuteOfDay, 5)
+            )
+        }
+    }
+
     private static func candidateStartPreservesResolvedEnd(
         _ candidateStartMinuteOfDay: Int,
         for target: TimeBlock,
         in resolvedPlan: DayPlan,
         activeBlocks: [TimeBlock]
     ) throws -> Bool {
+        // Instead of deriving every descendant interaction by hand, we simulate the
+        // candidate in a temporary plan and reuse the main resolver as the oracle.
         guard let currentResolvedEnd = target.resolvedEndMinuteOfDay else {
             throw ThingStructCoreError.invalidResolvedRange(blockID: target.id, start: -1, end: -1)
         }
@@ -739,30 +811,12 @@ public enum DayPlanEngine {
         guard let blockIndex = candidatePlan.blocks.firstIndex(where: { $0.id == target.id }) else {
             throw ThingStructCoreError.missingBlock(target.id)
         }
-
-        switch target.timing {
-        case let .absolute(_, requestedEndMinuteOfDay):
-            candidatePlan.blocks[blockIndex].timing = .absolute(
-                startMinuteOfDay: candidateStartMinuteOfDay,
-                requestedEndMinuteOfDay: requestedEndMinuteOfDay
-            )
-
-        case .relative:
-            guard let parentBlockID = target.parentBlockID else {
-                throw ThingStructCoreError.baseBlockMustUseAbsoluteTiming(target.id)
-            }
-            guard
-                let parent = activeBlocks.first(where: { $0.id == parentBlockID }),
-                let parentStart = parent.resolvedStartMinuteOfDay
-            else {
-                throw ThingStructCoreError.missingParent(blockID: target.id, parentID: parentBlockID)
-            }
-
-            candidatePlan.blocks[blockIndex].timing = .relative(
-                startOffsetMinutes: candidateStartMinuteOfDay - parentStart,
-                requestedDurationMinutes: max(currentResolvedEnd - candidateStartMinuteOfDay, 5)
-            )
-        }
+        candidatePlan.blocks[blockIndex].timing = try timingByMovingStart(
+            of: target,
+            to: candidateStartMinuteOfDay,
+            preservingResolvedEndMinuteOfDay: currentResolvedEnd,
+            activeBlocks: activeBlocks
+        )
 
         let resolvedCandidatePlan = try resolved(candidatePlan)
         guard let updatedTarget = resolvedCandidatePlan.blocks.first(where: { $0.id == target.id }) else {
@@ -777,6 +831,7 @@ public enum DayPlanEngine {
         startingAt blockID: UUID,
         childrenByParent: [UUID: [UUID]]
     ) -> Set<UUID> {
+        // Iterative depth-first search over the block tree.
         var descendants: Set<UUID> = []
         var stack = childrenByParent[blockID] ?? []
 
@@ -791,12 +846,14 @@ public enum DayPlanEngine {
 }
 
 private struct ResolvedSibling {
+    // Lightweight intermediate state used while resolving one sibling group.
     let block: TimeBlock
     let start: Int
     let requestedEnd: Int?
 }
 
 private struct ParentLayerKey: Hashable {
+    // Siblings are uniquely defined by sharing both a parent and a layer.
     let parentID: UUID?
     let layerIndex: Int
 }
