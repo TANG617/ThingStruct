@@ -6,9 +6,35 @@ import Foundation
 //
 // If you come from C++, think of this as a tiny repository / serialization layer.
 struct ThingStructDocumentStore {
-    let fileURL: URL
+    private let loadDocument: () throws -> ThingStructDocument?
+    private let saveDocument: (ThingStructDocument) throws -> Void
+
+    init(fileURL: URL) {
+        loadDocument = {
+            try Self.load(from: fileURL)
+        }
+        saveDocument = { document in
+            try Self.save(document, to: fileURL)
+        }
+    }
+
+    init(
+        load: @escaping () throws -> ThingStructDocument?,
+        save: @escaping (ThingStructDocument) throws -> Void
+    ) {
+        loadDocument = load
+        saveDocument = save
+    }
 
     func load() throws -> ThingStructDocument? {
+        try loadDocument()
+    }
+
+    func save(_ document: ThingStructDocument) throws {
+        try saveDocument(document)
+    }
+
+    private static func load(from fileURL: URL) throws -> ThingStructDocument? {
         // Returning `nil` here means "no document has been saved yet", not "an error happened".
         guard FileManager.default.fileExists(atPath: fileURL.path()) else {
             return nil
@@ -18,7 +44,10 @@ struct ThingStructDocumentStore {
         return try JSONDecoder().decode(ThingStructDocument.self, from: data)
     }
 
-    func save(_ document: ThingStructDocument) throws {
+    private static func save(
+        _ document: ThingStructDocument,
+        to fileURL: URL
+    ) throws {
         // iOS apps commonly store app-private files under Application Support.
         // We create the directory lazily so first launch works with no manual setup.
         let directoryURL = fileURL.deletingLastPathComponent()
@@ -27,18 +56,23 @@ struct ThingStructDocumentStore {
             withIntermediateDirectories: true,
             attributes: nil
         )
-        let data = try JSONEncoder.pretty.encode(document)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(document)
         // `.atomic` writes via a temporary file and then swaps it into place.
         // This reduces the chance of leaving a half-written document if the app is interrupted.
         try data.write(to: fileURL, options: .atomic)
     }
 
     nonisolated static var live: ThingStructDocumentStore {
-        // `Application Support` is the standard sandbox location for structured app data.
-        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let client = ThingStructSharedDocumentClient.appLive
         return ThingStructDocumentStore(
-            fileURL: baseURL.appending(path: "ThingStruct/document.json")
+            load: {
+                try client.load()
+            },
+            save: { document in
+                try client.save(document)
+            }
         )
     }
 }

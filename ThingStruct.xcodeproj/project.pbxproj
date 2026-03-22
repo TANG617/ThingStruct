@@ -6,10 +6,39 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B10000012EF3000000A74A6B /* ThingStructWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B10000022EF3000000A74A6B /* ThingStructWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B100000A2EF3000000A74A6B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 276619522EF2562D00A74A6B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B100000B2EF3000000A74A6B;
+			remoteInfo = ThingStructWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B10000072EF3000000A74A6B /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B10000012EF3000000A74A6B /* ThingStructWidgetExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		2735FB492F6B9E8500E0B4AD /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		2766195A2EF2562D00A74A6B /* ThingStruct.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ThingStruct.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9A4D4F3A1B2C3D4E5F607182 /* Design.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = Design.md; sourceTree = "<group>"; };
+		B10000022EF3000000A74A6B /* ThingStructWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ThingStructWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -19,6 +48,13 @@
 				Info.plist,
 			);
 			target = 276619592EF2562D00A74A6B /* ThingStruct */;
+		};
+		B10000032EF3000000A74A6B /* Exceptions for "ThingStructWidgetExtension" folder in "ThingStructWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B100000B2EF3000000A74A6B /* ThingStructWidgetExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -36,10 +72,30 @@
 			path = Tests;
 			sourceTree = "<group>";
 		};
+		B10000042EF3000000A74A6B /* ThingStruct/CoreShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ThingStruct/CoreShared;
+			sourceTree = "<group>";
+		};
+		B10000052EF3000000A74A6B /* ThingStructWidgetExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B10000032EF3000000A74A6B /* Exceptions for "ThingStructWidgetExtension" folder in "ThingStructWidgetExtension" target */,
+			);
+			path = ThingStructWidgetExtension;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		276619572EF2562D00A74A6B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B10000062EF3000000A74A6B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -55,6 +111,8 @@
 				2735FB492F6B9E8500E0B4AD /* README.md */,
 				9A4D4F3A1B2C3D4E5F607182 /* Design.md */,
 				2766195C2EF2562D00A74A6B /* ThingStruct */,
+				B10000042EF3000000A74A6B /* ThingStruct/CoreShared */,
+				B10000052EF3000000A74A6B /* ThingStructWidgetExtension */,
 				9A4D4F3A1B2C3D4E5F607181 /* Tests */,
 				2766195B2EF2562D00A74A6B /* Products */,
 			);
@@ -64,6 +122,7 @@
 			isa = PBXGroup;
 			children = (
 				2766195A2EF2562D00A74A6B /* ThingStruct.app */,
+				B10000022EF3000000A74A6B /* ThingStructWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -78,10 +137,12 @@
 				276619562EF2562D00A74A6B /* Sources */,
 				276619572EF2562D00A74A6B /* Frameworks */,
 				276619582EF2562D00A74A6B /* Resources */,
+				B10000072EF3000000A74A6B /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B100000C2EF3000000A74A6B /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				2766195C2EF2562D00A74A6B /* ThingStruct */,
@@ -92,6 +153,29 @@
 			productName = ThingStruct;
 			productReference = 2766195A2EF2562D00A74A6B /* ThingStruct.app */;
 			productType = "com.apple.product-type.application";
+		};
+		B100000B2EF3000000A74A6B /* ThingStructWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B100000D2EF3000000A74A6B /* Build configuration list for PBXNativeTarget "ThingStructWidgetExtension" */;
+			buildPhases = (
+				B10000082EF3000000A74A6B /* Sources */,
+				B10000062EF3000000A74A6B /* Frameworks */,
+				B10000092EF3000000A74A6B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B10000042EF3000000A74A6B /* ThingStruct/CoreShared */,
+				B10000052EF3000000A74A6B /* ThingStructWidgetExtension */,
+			);
+			name = ThingStructWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = ThingStructWidgetExtension;
+			productReference = B10000022EF3000000A74A6B /* ThingStructWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -104,6 +188,9 @@
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					276619592EF2562D00A74A6B = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
+					B100000B2EF3000000A74A6B = {
 						CreatedOnToolsVersion = 26.1.1;
 					};
 				};
@@ -123,12 +210,20 @@
 			projectRoot = "";
 			targets = (
 				276619592EF2562D00A74A6B /* ThingStruct */,
+				B100000B2EF3000000A74A6B /* ThingStructWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		276619582EF2562D00A74A6B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B10000092EF3000000A74A6B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -145,7 +240,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B10000082EF3000000A74A6B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B100000C2EF3000000A74A6B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B100000B2EF3000000A74A6B /* ThingStructWidgetExtension */;
+			targetProxy = B100000A2EF3000000A74A6B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		276619692EF2562F00A74A6B /* Debug */ = {
@@ -183,7 +293,6 @@
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -226,7 +335,6 @@
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -357,6 +465,74 @@
 			};
 			name = Release;
 		};
+		B100000E2EF3000000A74A6B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
+				CODE_SIGN_ENTITLEMENTS = ThingStructWidgetExtension/ThingStructWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PRTA2MGMQH;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ThingStructWidgetExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = tang.ThingStruct.WidgetExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		B100000F2EF3000000A74A6B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
+				CODE_SIGN_ENTITLEMENTS = ThingStructWidgetExtension/ThingStructWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PRTA2MGMQH;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ThingStructWidgetExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = tang.ThingStruct.WidgetExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -374,6 +550,15 @@
 			buildConfigurations = (
 				276619692EF2562F00A74A6B /* Debug */,
 				2766196A2EF2562F00A74A6B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B100000D2EF3000000A74A6B /* Build configuration list for PBXNativeTarget "ThingStructWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B100000E2EF3000000A74A6B /* Debug */,
+				B100000F2EF3000000A74A6B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

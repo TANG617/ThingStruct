@@ -5,6 +5,7 @@ import SwiftUI
 // the long-lived "application controller" (`ThingStructStore`) and inject it
 // into the rest of the UI.
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     // `@State` gives this view ownership of a mutable value whose lifetime is
     // tied to the view instance rather than to a single render pass.
     //
@@ -27,6 +28,26 @@ struct ContentView: View {
                 // `.task` is SwiftUI's way to run async/side-effect work tied to a view's life.
                 // Here we bootstrap the document exactly once when the root UI appears.
                 store.loadIfNeeded()
+                if let pendingURL = ThingStructExternalRouteCenter.shared.consumePendingURL() {
+                    store.handleDeepLink(pendingURL)
+                }
+                ThingStructQuickActionManager.refresh()
+            }
+            .onOpenURL { url in
+                store.handleDeepLink(url)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .thingStructExternalRouteDidChange)) { notification in
+                guard let url = notification.object as? URL else { return }
+                store.handleDeepLink(url)
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                guard newPhase == .active, store.isLoaded else { return }
+                store.reload()
+                store.syncCurrentBlockLiveActivity()
+                ThingStructQuickActionManager.refresh()
+                if let pendingURL = ThingStructExternalRouteCenter.shared.consumePendingURL() {
+                    store.handleDeepLink(pendingURL)
+                }
             }
     }
 }

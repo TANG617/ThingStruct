@@ -22,7 +22,7 @@ final class PresentationTests: XCTestCase {
         XCTAssertTrue(model.activeChain.first?.isBlank == true)
     }
 
-    func testTodayScreenModelIncludesRuntimeBlankBlocks() throws {
+    func testTodayScreenModelHidesRuntimeBlankBlocksButExposesOpenSlots() throws {
         let morning = baseBlock(title: "Morning", start: 60, requestedEnd: 120)
         let document = ThingStructDocument(
             dayPlans: [makePlan(blocks: [morning])]
@@ -35,8 +35,10 @@ final class PresentationTests: XCTestCase {
             currentMinute: nil
         )
 
-        XCTAssertTrue(model.blocks.contains(where: \.isBlank))
-        XCTAssertTrue(model.blocks.contains(where: { !$0.isBlank && $0.title == "Morning" }))
+        XCTAssertEqual(model.blocks.map(\.title), ["Morning"])
+        XCTAssertFalse(model.blocks.contains(where: \.isBlank))
+        XCTAssertEqual(model.openSlots.map(\.startMinuteOfDay), [0, 120])
+        XCTAssertEqual(model.openSlots.map(\.endMinuteOfDay), [60, 1440])
     }
 
     func testNowScreenModelKeepsCompletedUpperTaskSectionVisible() throws {
@@ -188,6 +190,24 @@ final class PresentationTests: XCTestCase {
         XCTAssertEqual(model.initialFocusBlockID, overlayID)
         XCTAssertEqual(model.selectedBlock?.id, overlayID)
         XCTAssertEqual(model.initialScrollMinute, 570)
+    }
+
+    func testTodayScreenModelDoesNotFocusBlankWhenCurrentMinuteIsInGap() throws {
+        let morning = baseBlock(title: "Morning", start: 540, requestedEnd: 600)
+        let evening = baseBlock(title: "Evening", start: 660, requestedEnd: 720)
+
+        let model = try ThingStructPresentation.todayScreenModel(
+            document: ThingStructDocument(dayPlans: [try DayPlanEngine.resolved(makePlan(blocks: [morning, evening]))]),
+            date: LocalDay(year: 2026, month: 3, day: 19),
+            selectedBlockID: nil,
+            currentMinute: 630
+        )
+
+        XCTAssertNil(model.initialFocusBlockID)
+        XCTAssertNil(model.selectedBlock)
+        XCTAssertEqual(model.initialScrollMinute, 630)
+        XCTAssertEqual(model.openSlots.map(\.startMinuteOfDay), [0, 600, 720])
+        XCTAssertEqual(model.openSlots.map(\.endMinuteOfDay), [540, 660, 1440])
     }
 
     func testTodayScreenModelIncludesParentTitleForOverlayDetail() throws {

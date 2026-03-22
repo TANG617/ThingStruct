@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // `DayPlanEngine` owns the rules for validating and resolving a day plan.
 //
@@ -634,6 +635,7 @@ public enum DayPlanEngine {
 
     private static func blankBaseBlock(in plan: DayPlan, start: Int, end: Int) -> TimeBlock {
         TimeBlock(
+            id: blankBaseBlockID(in: plan, start: start, end: end),
             dayPlanID: plan.id,
             layerIndex: 0,
             kind: .blankBase,
@@ -643,6 +645,20 @@ public enum DayPlanEngine {
             resolvedStartMinuteOfDay: start,
             resolvedEndMinuteOfDay: end
         )
+    }
+
+    private static func blankBaseBlockID(in plan: DayPlan, start: Int, end: Int) -> UUID {
+        let seed = "\(plan.id.uuidString)|\(start)|\(end)"
+        var bytes = Array(SHA256.hash(data: Data(seed.utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
     }
 
     private static func resolvedRangeMap(from blocks: [TimeBlock]) throws -> [UUID: (start: Int, end: Int)] {

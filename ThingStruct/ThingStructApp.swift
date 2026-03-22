@@ -5,6 +5,8 @@ import SwiftUI
 // We provide an `App` value describing the root scene graph, and SwiftUI/UIKit do the rest.
 @main
 struct ThingStructApp: App {
+    @UIApplicationDelegateAdaptor(ThingStructAppDelegate.self) private var appDelegate
+
     var body: some Scene {
         // `WindowGroup` is the root container for one or more app windows/scenes.
         // On iPhone you can think of it as "the main app window".

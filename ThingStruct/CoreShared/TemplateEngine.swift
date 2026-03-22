@@ -161,6 +161,7 @@ public enum TemplateEngine {
                 layerIndex: blockTemplate.layerIndex,
                 title: blockTemplate.title,
                 note: blockTemplate.note,
+                reminders: blockTemplate.reminders,
                 tasks: tasks,
                 timing: blockTemplate.timing
             )
@@ -338,6 +339,7 @@ public enum TemplateEngine {
                 layerIndex: block.layerIndex,
                 title: block.title,
                 note: block.note,
+                reminders: block.reminders,
                 taskBlueprints: block.tasks.map {
                     TaskBlueprint(id: $0.id, title: $0.title, order: $0.order)
                 },
@@ -385,6 +387,7 @@ public enum TemplateEngine {
                 layerIndex: block.layerIndex,
                 title: block.title,
                 note: block.note,
+                reminders: block.reminders,
                 taskBlueprints: copiedTaskBlueprints,
                 timing: block.timing
             )

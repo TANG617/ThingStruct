@@ -105,25 +105,6 @@ enum PreviewSupport {
         todayModel().selectedBlock!
     }
 
-    static func blankBlockDetailModel() -> BlockDetailModel {
-        let blankBlock = todayModel(document: ThingStructDocument(), currentMinute: nil)
-            .blocks
-            .first(where: \.isBlank)!
-
-        return BlockDetailModel(
-            id: blankBlock.id,
-            title: blankBlock.title,
-            note: blankBlock.note,
-            layerIndex: blankBlock.layerIndex,
-            startMinuteOfDay: blankBlock.startMinuteOfDay,
-            endMinuteOfDay: blankBlock.endMinuteOfDay,
-            isBlank: true,
-            tasks: [],
-            parentBlockID: blankBlock.parentBlockID,
-            parentBlockTitle: nil
-        )
-    }
-
     static func persistedSelectedBlock() -> TimeBlock {
         let document = seededDocument()
         let detail = selectedBlockDetailModel()

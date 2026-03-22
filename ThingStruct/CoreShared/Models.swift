@@ -267,6 +267,27 @@ public struct TaskBlueprint: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
+public enum ReminderTriggerMode: String, Equatable, Codable, Sendable {
+    case atStart
+    case beforeStart
+}
+
+public struct ReminderRule: Identifiable, Equatable, Codable, Sendable {
+    public var id: UUID
+    public var triggerMode: ReminderTriggerMode
+    public var offsetMinutes: Int
+
+    public init(
+        id: UUID = UUID(),
+        triggerMode: ReminderTriggerMode,
+        offsetMinutes: Int = 0
+    ) {
+        self.id = id
+        self.triggerMode = triggerMode
+        self.offsetMinutes = offsetMinutes
+    }
+}
+
 // Timing is modeled as an enum because a block is either:
 // - absolute: anchored to the day clock
 // - relative: anchored to its parent block
@@ -294,6 +315,7 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
     public var kind: TimeBlockKind
     public var title: String
     public var note: String?
+    public var reminders: [ReminderRule]
     public var tasks: [TaskItem]
     public var timing: TimeBlockTiming
     public var resolvedStartMinuteOfDay: Int?
@@ -308,6 +330,7 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
         kind: TimeBlockKind = .userDefined,
         title: String,
         note: String? = nil,
+        reminders: [ReminderRule] = [],
         tasks: [TaskItem] = [],
         timing: TimeBlockTiming,
         resolvedStartMinuteOfDay: Int? = nil,
@@ -321,6 +344,7 @@ public struct TimeBlock: Identifiable, Equatable, Codable, Sendable {
         self.kind = kind
         self.title = title
         self.note = note
+        self.reminders = reminders
         self.tasks = tasks
         self.timing = timing
         self.resolvedStartMinuteOfDay = resolvedStartMinuteOfDay
@@ -414,6 +438,7 @@ public struct BlockTemplate: Identifiable, Equatable, Codable, Sendable {
     public var layerIndex: Int
     public var title: String
     public var note: String?
+    public var reminders: [ReminderRule]
     public var taskBlueprints: [TaskBlueprint]
     public var timing: TimeBlockTiming
 
@@ -423,6 +448,7 @@ public struct BlockTemplate: Identifiable, Equatable, Codable, Sendable {
         layerIndex: Int,
         title: String,
         note: String? = nil,
+        reminders: [ReminderRule] = [],
         taskBlueprints: [TaskBlueprint] = [],
         timing: TimeBlockTiming
     ) {
@@ -431,6 +457,7 @@ public struct BlockTemplate: Identifiable, Equatable, Codable, Sendable {
         self.layerIndex = layerIndex
         self.title = title
         self.note = note
+        self.reminders = reminders
         self.taskBlueprints = taskBlueprints
         self.timing = timing
     }

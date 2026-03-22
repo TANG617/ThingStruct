@@ -18,6 +18,56 @@ enum BlockTimingDraftMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum ReminderPreset: String, CaseIterable, Identifiable {
+    case atStart
+    case fiveMinutesBefore
+    case tenMinutesBefore
+    case fifteenMinutesBefore
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .atStart:
+            return "At start"
+        case .fiveMinutesBefore:
+            return "5 min before"
+        case .tenMinutesBefore:
+            return "10 min before"
+        case .fifteenMinutesBefore:
+            return "15 min before"
+        }
+    }
+
+    var rule: ReminderRule {
+        switch self {
+        case .atStart:
+            return ReminderRule(triggerMode: .atStart, offsetMinutes: 0)
+        case .fiveMinutesBefore:
+            return ReminderRule(triggerMode: .beforeStart, offsetMinutes: 5)
+        case .tenMinutesBefore:
+            return ReminderRule(triggerMode: .beforeStart, offsetMinutes: 10)
+        case .fifteenMinutesBefore:
+            return ReminderRule(triggerMode: .beforeStart, offsetMinutes: 15)
+        }
+    }
+
+    init?(rule: ReminderRule) {
+        switch (rule.triggerMode, rule.offsetMinutes) {
+        case (.atStart, _):
+            self = .atStart
+        case (.beforeStart, 5):
+            self = .fiveMinutesBefore
+        case (.beforeStart, 10):
+            self = .tenMinutesBefore
+        case (.beforeStart, 15):
+            self = .fifteenMinutesBefore
+        default:
+            return nil
+        }
+    }
+}
+
 struct BlockDraft: Equatable {
     var mode: BlockDraftMode
     var title: String
@@ -29,6 +79,7 @@ struct BlockDraft: Equatable {
     var relativeOffsetMinutes: Int
     var hasRelativeDuration: Bool
     var relativeDurationMinutes: Int
+    var reminders: [ReminderRule]
     var tasks: [TaskItem]
 
     private var snappedAbsoluteStartMinuteOfDay: Int {
@@ -53,6 +104,15 @@ struct BlockDraft: Equatable {
         relativeDurationMinutes.snapped(toStep: 5, within: 5 ... 720)
     }
 
+    var reminderPreset: ReminderPreset? {
+        get {
+            reminders.first.flatMap(ReminderPreset.init(rule:))
+        }
+        set {
+            reminders = newValue.map { [$0.rule] } ?? []
+        }
+    }
+
     func makeBlock(dayPlanID: UUID) -> TimeBlock {
         // This is the "commit" boundary from form state into domain state.
         TimeBlock(
@@ -60,6 +120,7 @@ struct BlockDraft: Equatable {
             layerIndex: 0,
             title: title.isEmpty ? "Untitled" : title,
             note: note.isEmpty ? nil : note,
+            reminders: reminders,
             tasks: normalizedTasks,
             timing: timing
         )
@@ -107,6 +168,7 @@ extension BlockDraft {
             relativeOffsetMinutes: 0,
             hasRelativeDuration: false,
             relativeDurationMinutes: 60,
+            reminders: [],
             tasks: []
         )
     }
@@ -123,6 +185,7 @@ extension BlockDraft {
             relativeOffsetMinutes: 0,
             hasRelativeDuration: true,
             relativeDurationMinutes: 60,
+            reminders: [],
             tasks: []
         )
     }
@@ -173,6 +236,7 @@ extension BlockDraft {
             relativeOffsetMinutes: relativeOffset,
             hasRelativeDuration: hasDuration,
             relativeDurationMinutes: relativeDuration,
+            reminders: sourceBlock.reminders,
             tasks: detail.tasks
         )
     }
@@ -218,6 +282,7 @@ extension BlockDraft {
             relativeOffsetMinutes: relativeOffset,
             hasRelativeDuration: hasDuration,
             relativeDurationMinutes: relativeDuration,
+            reminders: templateBlock.reminders,
             tasks: templateBlock.taskBlueprints
                 .sorted { lhs, rhs in
                     if lhs.order != rhs.order {
@@ -237,7 +302,7 @@ struct BlockEditorSheet: View {
     // The sheet owns a temporary draft so text entry can be incomplete/invalid
     // without mutating the persisted block immediately.
     @State var draft: BlockDraft
-    let onSave: (BlockDraft) -> Void
+    let onSave: (BlockDraft) -> Bool
     var onCancelBlock: (() -> Void)? = nil
 
     @State private var isShowingCancelConfirmation = false
@@ -274,7 +339,7 @@ struct BlockEditorSheet: View {
                             MinutePickerRow(
                                 title: "End",
                                 minuteOfDay: $draft.absoluteEndMinuteOfDay,
-                                validRange: 5 ... (24 * 60)
+                                validRange: absoluteEndValidRange
                             )
                         }
                     } else {
@@ -284,6 +349,30 @@ struct BlockEditorSheet: View {
                         Toggle("Duration", isOn: $draft.hasRelativeDuration)
                         if draft.hasRelativeDuration {
                             Stepper("Duration: \(draft.relativeDurationMinutes) min", value: $draft.relativeDurationMinutes, in: 5 ... 720, step: 5)
+                        }
+                    }
+                }
+
+                Section("Reminder") {
+                    Toggle(
+                        "Enable reminder",
+                        isOn: Binding(
+                            get: { draft.reminderPreset != nil },
+                            set: { draft.reminderPreset = $0 ? (draft.reminderPreset ?? .atStart) : nil }
+                        )
+                    )
+
+                    if draft.reminderPreset != nil {
+                        Picker(
+                            "When",
+                            selection: Binding(
+                                get: { draft.reminderPreset ?? .atStart },
+                                set: { draft.reminderPreset = $0 }
+                            )
+                        ) {
+                            ForEach(ReminderPreset.allCases) { preset in
+                                Text(preset.title).tag(preset)
+                            }
                         }
                     }
                 }
@@ -322,6 +411,14 @@ struct BlockEditorSheet: View {
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: draft.absoluteStartMinuteOfDay) { _, _ in
+                clampAbsoluteEndIfNeeded()
+            }
+            .onChange(of: draft.hasExplicitAbsoluteEnd) { _, isEnabled in
+                if isEnabled {
+                    clampAbsoluteEndIfNeeded()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -331,8 +428,9 @@ struct BlockEditorSheet: View {
 
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        onSave(draft)
-                        dismiss()
+                        if onSave(draft) {
+                            dismiss()
+                        }
                     }
                     .disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -351,6 +449,21 @@ struct BlockEditorSheet: View {
                 }
             }
         }
+    }
+
+    private var absoluteEndValidRange: ClosedRange<Int> {
+        let snappedStart = draft.absoluteStartMinuteOfDay.snapped(toStep: 5, within: 0 ... (24 * 60 - 5))
+        let minimumEnd = min(snappedStart + 5, 24 * 60)
+        return minimumEnd ... (24 * 60)
+    }
+
+    private func clampAbsoluteEndIfNeeded() {
+        guard draft.hasExplicitAbsoluteEnd else { return }
+
+        draft.absoluteEndMinuteOfDay = max(
+            draft.absoluteEndMinuteOfDay.snapped(toStep: 5, within: absoluteEndValidRange),
+            absoluteEndValidRange.lowerBound
+        )
     }
 }
 
@@ -397,21 +510,27 @@ private struct MinutePickerRow: View {
     BlockEditorSheet(
         title: "New Base Block",
         draft: PreviewSupport.sampleBlockDraftBase()
-    ) { _ in }
+    ) { _ in
+        true
+    }
 }
 
 #Preview("Block Editor - Overlay") {
     BlockEditorSheet(
-        title: "New Overlay",
+        title: "New L2",
         draft: PreviewSupport.sampleBlockDraftOverlay()
-    ) { _ in }
+    ) { _ in
+        true
+    }
 }
 
 #Preview("Block Editor - Edit") {
     BlockEditorSheet(
         title: "Edit Block",
         draft: PreviewSupport.sampleBlockDraftEdit()
-    ) { _ in }
+    ) { _ in
+        true
+    }
 }
 
 #Preview("Block Editor - Edit With Cancel") {
@@ -419,6 +538,7 @@ private struct MinutePickerRow: View {
         title: "Edit Block",
         draft: PreviewSupport.sampleBlockDraftEdit()
     ) { _ in
+        true
     } onCancelBlock: {
     }
 }

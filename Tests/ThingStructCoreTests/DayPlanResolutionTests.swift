@@ -103,6 +103,43 @@ final class DayPlanResolutionTests: XCTestCase {
         XCTAssertEqual(blankRanges.map(\.1), [60, 180, 1440])
     }
 
+    func testBlankBaseBlockIdentityIsStableAndFilledGapDisappears() throws {
+        let morning = baseBlock(title: "Morning", start: 60, requestedEnd: 120)
+        let evening = baseBlock(title: "Evening", start: 180, requestedEnd: 240)
+        let basePlan = makePlan(blocks: [morning, evening])
+
+        let firstRuntime = try DayPlanEngine.runtimeResolved(basePlan)
+        let secondRuntime = try DayPlanEngine.runtimeResolved(basePlan)
+        let middleGapID = try XCTUnwrap(
+            firstRuntime.blocks.first(where: {
+                $0.isBlankBaseBlock &&
+                $0.resolvedStartMinuteOfDay == 120 &&
+                $0.resolvedEndMinuteOfDay == 180
+            })?.id
+        )
+        let repeatedMiddleGapID = try XCTUnwrap(
+            secondRuntime.blocks.first(where: {
+                $0.isBlankBaseBlock &&
+                $0.resolvedStartMinuteOfDay == 120 &&
+                $0.resolvedEndMinuteOfDay == 180
+            })?.id
+        )
+
+        XCTAssertEqual(middleGapID, repeatedMiddleGapID)
+
+        let midday = baseBlock(title: "Midday", start: 120, requestedEnd: 180)
+        let filledRuntime = try DayPlanEngine.runtimeResolved(makePlan(blocks: [morning, midday, evening]))
+
+        XCTAssertFalse(filledRuntime.blocks.contains(where: { $0.id == middleGapID }))
+        XCTAssertFalse(
+            filledRuntime.blocks.contains(where: {
+                $0.isBlankBaseBlock &&
+                $0.resolvedStartMinuteOfDay == 120 &&
+                $0.resolvedEndMinuteOfDay == 180
+            })
+        )
+    }
+
     func testResolvedIgnoresStaleCachedResolvedMinutes() throws {
         var staleMorning = baseBlock(title: "Morning", start: 360)
         staleMorning.resolvedStartMinuteOfDay = 999

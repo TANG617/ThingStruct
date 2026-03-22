@@ -61,6 +61,16 @@ public struct TimelineBlockItem: Identifiable, Equatable, Sendable {
     public var incompleteTaskCount: Int
 }
 
+public struct TodayOpenSlotItem: Identifiable, Equatable, Sendable {
+    public var id: UUID
+    public var startMinuteOfDay: Int
+    public var endMinuteOfDay: Int
+
+    public var durationMinutes: Int {
+        endMinuteOfDay - startMinuteOfDay
+    }
+}
+
 public struct BlockDetailModel: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var title: String
@@ -77,6 +87,7 @@ public struct BlockDetailModel: Identifiable, Equatable, Sendable {
 public struct TodayScreenModel: Equatable, Sendable {
     public var date: LocalDay
     public var blocks: [TimelineBlockItem]
+    public var openSlots: [TodayOpenSlotItem]
     public var selectedBlock: BlockDetailModel?
     public var initialScrollMinute: Int
     public var initialFocusBlockID: UUID?
@@ -171,11 +182,33 @@ public enum ThingStructPresentation {
         selectedBlockID: UUID?,
         currentMinute: Int?
     ) throws -> TodayScreenModel {
-        // `Today` needs runtime blank blocks, so it asks for `runtimeResolved`
-        // rather than the plain persisted plan.
+        // `Today` still asks for `runtimeResolved`, but only to derive open slots and
+        // current-time behavior. The visible timeline itself stays user-authored only.
         let runtimePlan = try DayPlanEngine.runtimeResolved(document.dayPlan(for: date) ?? DayPlan(date: date))
+        let openSlots = runtimePlan.blocks
+            .filter { !$0.isCancelled && $0.isBlankBaseBlock }
+            .compactMap { block -> TodayOpenSlotItem? in
+                guard
+                    let start = block.resolvedStartMinuteOfDay,
+                    let end = block.resolvedEndMinuteOfDay
+                else {
+                    return nil
+                }
+
+                return TodayOpenSlotItem(
+                    id: block.id,
+                    startMinuteOfDay: start,
+                    endMinuteOfDay: end
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.startMinuteOfDay != rhs.startMinuteOfDay {
+                    return lhs.startMinuteOfDay < rhs.startMinuteOfDay
+                }
+                return lhs.endMinuteOfDay < rhs.endMinuteOfDay
+            }
         let sortedBlocks = runtimePlan.blocks
-            .filter { !$0.isCancelled }
+            .filter { !$0.isCancelled && !$0.isBlankBaseBlock }
             .compactMap { block -> TimelineBlockItem? in
                 guard
                     let start = block.resolvedStartMinuteOfDay,
@@ -198,38 +231,42 @@ public enum ThingStructPresentation {
                     startMinuteOfDay: snappedStart,
                     endMinuteOfDay: snappedEnd,
                     layerIndex: block.layerIndex,
-                    isBlank: block.isBlankBaseBlock,
+                    isBlank: false,
                     incompleteTaskCount: block.tasks.filter { !$0.isCompleted }.count
                 )
             }
             .sorted(by: timelineSort)
 
         // Focus selection is a presentation decision:
-        // explicit user selection wins, otherwise prefer the current active block,
-        // otherwise fall back to the first real block.
+        // explicit user selection wins; if we're on "today now", prefer the current
+        // active *user* block; otherwise fall back to the first real block.
+        let visibleBlockIDs = Set(sortedBlocks.map(\.id))
         let focusedBlockID: UUID?
-        if let selectedBlockID {
+        if let selectedBlockID, visibleBlockIDs.contains(selectedBlockID) {
             focusedBlockID = selectedBlockID
         } else if let currentMinute {
-            focusedBlockID = try DayPlanEngine.activeSelection(
+            let selection = try DayPlanEngine.activeSelection(
                 in: document.dayPlan(for: date) ?? DayPlan(date: date),
                 at: currentMinute
-            ).activeBlock?.id
+            )
+            focusedBlockID = selection.chain.reversed().first(where: { !$0.isBlankBaseBlock })?.id
         } else {
-            focusedBlockID = sortedBlocks.first(where: { !$0.isBlank })?.id
+            focusedBlockID = sortedBlocks.first?.id
         }
 
         let selectedBlock = runtimePlan.blocks
-            .first(where: { $0.id == focusedBlockID && !$0.isCancelled })
+            .first(where: { $0.id == focusedBlockID && !$0.isCancelled && !$0.isBlankBaseBlock })
             .flatMap { detailModel(for: $0, allBlocks: runtimePlan.blocks) }
 
         let fallbackMinute = sortedBlocks.first(where: { $0.id == focusedBlockID })?.startMinuteOfDay
-            ?? sortedBlocks.first(where: { !$0.isBlank })?.startMinuteOfDay
+            ?? currentMinute
+            ?? sortedBlocks.first?.startMinuteOfDay
             ?? 0
 
         return TodayScreenModel(
             date: date,
             blocks: sortedBlocks,
+            openSlots: openSlots,
             selectedBlock: selectedBlock,
             initialScrollMinute: fallbackMinute,
             initialFocusBlockID: focusedBlockID
@@ -305,6 +342,7 @@ public enum ThingStructPresentation {
         // Views consume this richer display model so they do not need to know how to
         // find parent titles, snap times, or sort tasks themselves.
         guard
+            !block.isBlankBaseBlock,
             let start = block.resolvedStartMinuteOfDay,
             let end = block.resolvedEndMinuteOfDay
         else {
@@ -328,7 +366,7 @@ public enum ThingStructPresentation {
             layerIndex: block.layerIndex,
             startMinuteOfDay: snappedStart,
             endMinuteOfDay: snappedEnd,
-            isBlank: block.isBlankBaseBlock,
+            isBlank: false,
             tasks: block.tasks.sorted(by: taskSort),
             parentBlockID: block.parentBlockID,
             parentBlockTitle: parentTitle

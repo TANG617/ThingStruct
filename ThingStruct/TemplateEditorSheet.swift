@@ -150,6 +150,7 @@ struct TemplateEditorSheet: View {
             // on the same mental model.
             BlockEditorSheet(title: session.title, draft: session.draft) { draft in
                 apply(draft)
+                return true
             }
         }
         .presentationDetents([.large])
@@ -242,7 +243,7 @@ struct TemplateEditorSheet: View {
 
     private func beginOverlayCreation(for block: BlockTemplate) {
         editorSession = TemplateBlockEditorSession(
-            title: "New Overlay",
+            title: block.layerIndex.newNextTimelineLayerActionTitle,
             draft: .overlay(parentBlockID: block.id, layerIndex: block.layerIndex + 1)
         )
     }
@@ -316,6 +317,7 @@ struct TemplateEditorSheet: View {
             layerIndex: layerIndex,
             title: draft.title.isEmpty ? "Untitled" : draft.title,
             note: draft.note.isEmpty ? nil : draft.note,
+            reminders: draft.reminders,
             taskBlueprints: draft.tasks.enumerated().map { index, task in
                 TaskBlueprint(title: task.title, order: index)
             },
@@ -344,6 +346,14 @@ private struct TemplateBlockRow: View {
     let onAddOverlay: () -> Void
     let onDelete: () -> Void
 
+    private var layerBadgeTitle: String {
+        block.layerIndex.timelineLayerBadgeTitle
+    }
+
+    private var addChildLayerTitle: String {
+        block.layerIndex.addNextTimelineLayerActionTitle
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
@@ -355,7 +365,7 @@ private struct TemplateBlockRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("L\(block.layerIndex)")
+                Text(layerBadgeTitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -396,7 +406,7 @@ private struct TemplateBlockRow: View {
     }
 
     private var addOverlayButton: some View {
-        Button("Add Overlay", action: onAddOverlay)
+        Button(addChildLayerTitle, action: onAddOverlay)
             .buttonStyle(.bordered)
     }
 

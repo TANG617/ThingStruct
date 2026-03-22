@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import WidgetKit
 
 // `RootTab` is a small domain enum for the shell navigation state.
 // Keeping it typed is safer than passing raw strings or integers around.
@@ -66,6 +67,7 @@ final class ThingStructStore {
             isLoaded = true
             dismissError()
             ensureMaterialized(for: selectedDate)
+            syncNotifications()
         } catch {
             isLoaded = true
             presentError(error)
@@ -168,7 +170,7 @@ final class ThingStructStore {
         return try? DayPlanEngine.activeSelection(
             in: plan,
             at: currentDate.minuteOfDay
-        ).activeBlock?.id
+        ).chain.reversed().first(where: { !$0.isBlankBaseBlock })?.id
     }
 
     func templatesScreenModel(referenceDay: LocalDay? = nil) throws -> TemplatesScreenModel {
@@ -233,6 +235,41 @@ final class ThingStructStore {
 
             plan.blocks[blockIndex].tasks[taskIndex].isCompleted.toggle()
             plan.blocks[blockIndex].tasks[taskIndex].completedAt = plan.blocks[blockIndex].tasks[taskIndex].isCompleted ? Date() : nil
+        }
+    }
+
+    func startCurrentBlockLiveActivity(referenceDate: Date = .now) {
+        Task {
+            guard #available(iOS 16.1, *) else { return }
+            do {
+                _ = try await ThingStructCurrentBlockLiveActivityController.start(
+                    using: .appLive,
+                    at: referenceDate
+                )
+            } catch {
+                presentError(error)
+            }
+        }
+    }
+
+    func endCurrentBlockLiveActivity() {
+        Task {
+            guard #available(iOS 16.1, *) else { return }
+            await ThingStructCurrentBlockLiveActivityController.endAll()
+        }
+    }
+
+    func syncCurrentBlockLiveActivity(referenceDate: Date = .now) {
+        Task {
+            guard #available(iOS 16.1, *) else { return }
+            do {
+                _ = try await ThingStructCurrentBlockLiveActivityController.sync(
+                    using: .appLive,
+                    at: referenceDate
+                )
+            } catch {
+                presentError(error)
+            }
         }
     }
 
@@ -489,22 +526,12 @@ final class ThingStructStore {
         // The store itself never writes files directly; persistence is delegated so it can
         // be swapped for previews/tests.
         try documentStore.save(document)
+        WidgetCenter.shared.reloadTimelines(ofKind: ThingStructSharedConfig.widgetKind)
+        syncCurrentBlockLiveActivity()
+        syncNotifications()
     }
-}
 
-extension JSONEncoder {
-    static var pretty: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }
-}
-
-private extension Date {
-    var minuteOfDay: Int {
-        // Storing "minutes since midnight" is much simpler than repeatedly passing
-        // full `Date` values through day-plan calculations.
-        let components = Calendar.current.dateComponents([.hour, .minute], from: self)
-        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
+    private func syncNotifications() {
+        ThingStructNotificationCoordinator.shared.sync(with: document)
     }
 }
