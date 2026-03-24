@@ -44,6 +44,10 @@ struct ThingStructSystemLiveActivitySnapshot: Equatable, Sendable {
     let remainingTaskCount: Int
     let statusMessage: String?
 
+    func tapURL(source: ThingStructSystemSource = .liveActivity) -> URL? {
+        ThingStructSystemRoute.now(source: source).url
+    }
+
     func deepLinkURL(source: ThingStructSystemSource = .liveActivity) -> URL? {
         if let displayTask {
             return ThingStructSystemRoute.today(

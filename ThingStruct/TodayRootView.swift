@@ -156,7 +156,11 @@ struct TodayRootView: View {
         case let .overlay(parentBlockID, layerIndex):
             editorSession = BlockEditorSession(
                 title: option.title,
-                draft: .overlay(parentBlockID: parentBlockID, layerIndex: layerIndex),
+                draft: .overlay(
+                    parentBlockID: parentBlockID,
+                    layerIndex: layerIndex,
+                    parentResolvedRange: resolvedRange(for: parentBlockID)
+                ),
                 scrollToSavedBlockOnSave: true
             )
         }
@@ -174,7 +178,11 @@ struct TodayRootView: View {
 
         editorSession = BlockEditorSession(
             title: "Edit Block",
-            draft: .editing(detail: detail, sourceBlock: sourceBlock)
+            draft: .editing(
+                detail: detail,
+                sourceBlock: sourceBlock,
+                parentResolvedRange: sourceBlock.parentBlockID.flatMap(resolvedRange(for:))
+            )
         )
     }
 
@@ -193,6 +201,18 @@ struct TodayRootView: View {
         case .overlay:
             return "square.stack.badge.plus"
         }
+    }
+
+    private func resolvedRange(for blockID: UUID) -> (start: Int, end: Int)? {
+        guard
+            let block = store.persistedBlock(on: store.selectedDate, blockID: blockID),
+            let start = block.resolvedStartMinuteOfDay,
+            let end = block.resolvedEndMinuteOfDay
+        else {
+            return nil
+        }
+
+        return (start, end)
     }
 }
 

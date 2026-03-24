@@ -264,6 +264,41 @@ public enum TemplateEngine {
         )
     }
 
+    public static func rebuildDayPlan(
+        for date: LocalDay,
+        existingDayPlans: [DayPlan],
+        savedTemplates: [SavedDayTemplate],
+        weekdayRules: [WeekdayTemplateRule],
+        overrides: [DateTemplateOverride],
+        generatedAt: Date = Date()
+    ) throws -> DayPlan {
+        let existingPlan = try uniqueDayPlan(for: date, in: existingDayPlans)
+        let dayPlanID = existingPlan?.id ?? UUID()
+
+        guard let selectedTemplate = try selectedSavedTemplate(
+            for: date,
+            savedTemplates: savedTemplates,
+            weekdayRules: weekdayRules,
+            overrides: overrides
+        ) else {
+            return DayPlan(
+                id: dayPlanID,
+                date: date,
+                sourceSavedTemplateID: nil,
+                lastGeneratedAt: generatedAt,
+                hasUserEdits: false,
+                blocks: []
+            )
+        }
+
+        return try instantiateDayPlan(
+            from: selectedTemplate,
+            for: date,
+            dayPlanID: dayPlanID,
+            generatedAt: generatedAt
+        )
+    }
+
     public static func updateSavedTemplate(
         _ templateID: UUID,
         title: String,

@@ -12,7 +12,7 @@ struct ThingStructCurrentBlockLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: ThingStructCurrentBlockActivityAttributes.self) { context in
             ThingStructLiveActivityLockScreenView(context: context)
-                .widgetURL(context.deepLinkURL)
+                .widgetURL(context.tapURL)
                 .activityBackgroundTint(.clear)
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -21,34 +21,59 @@ struct ThingStructCurrentBlockLiveActivity: Widget {
                     Text(context.state.title)
                         .font(.headline)
                         .lineLimit(1)
+                        .padding(.leading, 8)
+                        .padding(.top, 6)
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text("\(context.state.remainingMinutes)m")
-                        .font(.headline.monospacedDigit())
+                    ThingStructLiveActivitySummaryBadge(state: context.state)
+                        .padding(.trailing, 8)
+                        .padding(.top, 4)
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
                     ThingStructLiveActivityExpandedContent(context: context)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 4)
+                        .padding(.bottom, 8)
                 }
             } compactLeading: {
-                Image(systemName: context.state.remainingTaskCount == 0 ? "checkmark.circle.fill" : "bolt.fill")
+                Image(systemName: context.state.compactIconName)
                     .foregroundStyle(themeTint)
             } compactTrailing: {
-                Text("\(context.state.remainingMinutes)m")
-                    .font(.caption2.monospacedDigit())
+                Text(context.state.compactTrailingText)
+                    .font(.caption2.weight(.semibold))
             } minimal: {
-                if context.state.remainingTaskCount == 0 {
-                    Image(systemName: "checkmark")
-                        .font(.caption2.weight(.semibold))
-                } else {
-                    Text("\(min(context.state.remainingTaskCount, 9))")
-                        .font(.caption2.weight(.semibold))
-                }
+                Image(systemName: context.state.minimalIconName)
+                    .font(.caption2.weight(.semibold))
             }
-            .widgetURL(context.deepLinkURL)
+            .widgetURL(context.tapURL)
             .keylineTint(themeTint)
         }
+    }
+}
+
+@available(iOS 16.1, *)
+private struct ThingStructLiveActivitySummaryBadge: View {
+    let state: ThingStructCurrentBlockActivityAttributes.ContentState
+
+    private var themeTint: Color {
+        AppTintPreset.current.tintColor
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: state.compactIconName)
+                .imageScale(.small)
+
+            Text(state.summaryBadgeText)
+                .lineLimit(1)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(themeTint)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(themeTint.opacity(0.12), in: Capsule())
     }
 }
 
@@ -56,23 +81,11 @@ struct ThingStructCurrentBlockLiveActivity: Widget {
 private struct ThingStructLiveActivityLockScreenView: View {
     let context: ActivityViewContext<ThingStructCurrentBlockActivityAttributes>
 
-    private var themeTint: Color {
-        AppTintPreset.current.tintColor
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(context.state.title)
-                    .font(.title2.weight(.semibold))
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-
-                Text("\(context.state.remainingMinutes)m")
-                    .font(.subheadline.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(themeTint)
-            }
+            Text(context.state.title)
+                .font(.title2.weight(.semibold))
+                .lineLimit(1)
 
             HStack(spacing: 10) {
                 Text(context.state.timeRangeText)
@@ -103,9 +116,7 @@ private struct ThingStructLiveActivityLockScreenView: View {
     }
 
     private var summaryTitle: String {
-        context.state.remainingTaskCount == 0
-            ? "All caught up"
-            : "\(context.state.remainingTaskCount) tasks left"
+        context.state.statusSummary
     }
 }
 
@@ -115,19 +126,10 @@ private struct ThingStructLiveActivityExpandedContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(context.state.timeRangeText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-
-                Text(context.state.remainingTaskCount == 0 ? "Caught up" : "\(context.state.remainingTaskCount) left")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Text(context.state.timeRangeText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
 
             ThingStructLiveActivityDetailContent(
                 state: context.state,
@@ -167,8 +169,8 @@ private struct ThingStructLiveActivityDetailContent: View {
                 noteRow(displayNote)
             }
 
-            if let taskIntent = state.displayTaskIntent, let displayTaskTitle = state.displayTaskTitle {
-                taskRow(title: displayTaskTitle, intent: taskIntent)
+            if let taskIntent = state.actionableTaskIntent, let taskTitle = state.actionableTaskTitle {
+                taskRow(title: taskTitle, intent: taskIntent)
             } else {
                 completionState
             }
@@ -197,7 +199,7 @@ private struct ThingStructLiveActivityDetailContent: View {
         title: String,
         intent: CompleteLiveActivityTaskIntent
     ) -> some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Label("Current task", systemImage: "checklist")
                     .font(metaFont.weight(.semibold))
@@ -217,7 +219,7 @@ private struct ThingStructLiveActivityDetailContent: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(themeTint)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 34, height: 34)
                     .background(
                         Circle()
                             .fill(themeTint.opacity(0.14))
@@ -244,148 +246,186 @@ private struct ThingStructLiveActivityDetailContent: View {
     }
 
     private var completionTitle: String {
-        state.remainingTaskCount == 0
-            ? "All caught up"
-            : "\(state.remainingTaskCount) tasks left"
+        state.statusSummary
     }
 
     private var completionIconName: String {
         state.remainingTaskCount == 0
             ? "checkmark.circle.fill"
-            : "info.circle.fill"
+            : "checklist"
     }
 }
 
 @available(iOS 16.1, *)
 private extension ActivityViewContext<ThingStructCurrentBlockActivityAttributes> {
-    var deepLinkURL: URL? {
-        URL(string: state.deepLinkURL)
+    var tapURL: URL? {
+        URL(string: state.tapURL)
     }
 }
 
 @available(iOS 16.1, *)
 private extension ThingStructCurrentBlockActivityAttributes.ContentState {
-    var displayTaskIntent: CompleteLiveActivityTaskIntent? {
+    var hasActionableTask: Bool {
+        actionableTaskIntent != nil && actionableTaskTitle != nil
+    }
+
+    var actionableTaskIntent: CompleteLiveActivityTaskIntent? {
         guard
-            let displayTaskDateISO,
-            let displayTaskBlockID,
-            let displayTaskID
+            let actionableTaskDateISO,
+            let actionableTaskBlockID,
+            let actionableTaskID
         else {
             return nil
         }
 
         return CompleteLiveActivityTaskIntent(
-            dateISO: displayTaskDateISO,
-            blockID: displayTaskBlockID,
-            taskID: displayTaskID
+            dateISO: actionableTaskDateISO,
+            blockID: actionableTaskBlockID,
+            taskID: actionableTaskID
         )
+    }
+
+    var compactIconName: String {
+        if hasActionableTask {
+            return "checkmark.circle"
+        }
+        return remainingTaskCount == 0 ? "checkmark.circle.fill" : "info.circle"
+    }
+
+    var minimalIconName: String {
+        if hasActionableTask {
+            return "checkmark.circle"
+        }
+        return remainingTaskCount == 0 ? "checkmark" : "ellipsis.circle"
+    }
+
+    var compactTrailingText: String {
+        remainingTaskCount == 0 ? "Done" : "\(min(remainingTaskCount, 9))"
+    }
+
+    var summaryBadgeText: String {
+        remainingTaskCount == 0 ? "Done" : "\(remainingTaskCount) left"
+    }
+
+    var statusSummary: String {
+        remainingTaskCount == 0 ? "All caught up" : "\(remainingTaskCount) tasks left"
     }
 }
 
-#Preview("Live Activity Top Layer", as: .content, using: ThingStructCurrentBlockActivityAttributes(
+@available(iOS 16.1, *)
+private let liveActivityPreviewAttributes = ThingStructCurrentBlockActivityAttributes(
     dateISO: "2026-03-22",
     currentBlockID: UUID().uuidString
-)) {
-    ThingStructCurrentBlockLiveActivity()
-} contentStates: {
-    ThingStructCurrentBlockActivityAttributes.ContentState(
+)
+
+@available(iOS 16.1, *)
+private extension ThingStructCurrentBlockActivityAttributes.ContentState {
+    static func preview(
+        title: String,
+        timeRangeText: String,
+        remainingTaskCount: Int,
+        displayNote: String?,
+        actionableTaskTitle: String?,
+        displaySourceBlockTitle: String?,
+        statusMessage: String?
+    ) -> Self {
+        let taskBlockID = UUID().uuidString
+        let taskID = UUID().uuidString
+
+        return ThingStructCurrentBlockActivityAttributes.ContentState(
+            title: title,
+            timeRangeText: timeRangeText,
+            remainingTaskCount: remainingTaskCount,
+            tapURL: ThingStructSystemRoute.now(source: .liveActivity).url?.absoluteString ?? "thingstruct://now",
+            displayNote: displayNote,
+            actionableTaskTitle: actionableTaskTitle,
+            actionableTaskDateISO: actionableTaskTitle == nil ? nil : "2026-03-22",
+            actionableTaskBlockID: actionableTaskTitle == nil ? nil : taskBlockID,
+            actionableTaskID: actionableTaskTitle == nil ? nil : taskID,
+            displaySourceBlockTitle: displaySourceBlockTitle,
+            statusMessage: statusMessage
+        )
+    }
+
+    static let previewTopLayer = preview(
         title: "Focus Sprint",
         timeRangeText: "09:00 - 11:00",
-        remainingMinutes: 42,
         remainingTaskCount: 2,
-        deepLinkURL: ThingStructSystemRoute.today(
-            date: LocalDay(year: 2026, month: 3, day: 22),
-            blockID: UUID(),
-            taskID: UUID(),
-            source: .liveActivity
-        ).url?.absoluteString ?? "thingstruct://today",
         displayNote: "Protect this block for deep work and keep distractions outside the sprint.",
-        displayTaskTitle: "Ship system surfaces",
-        displayTaskDateISO: "2026-03-22",
-        displayTaskBlockID: UUID().uuidString,
-        displayTaskID: UUID().uuidString,
+        actionableTaskTitle: "Ship system surfaces",
         displaySourceBlockTitle: nil,
         statusMessage: nil
     )
-}
 
-#Preview("Live Activity Fallback Layer", as: .content, using: ThingStructCurrentBlockActivityAttributes(
-    dateISO: "2026-03-22",
-    currentBlockID: UUID().uuidString
-)) {
-    ThingStructCurrentBlockLiveActivity()
-} contentStates: {
-    ThingStructCurrentBlockActivityAttributes.ContentState(
+    static let previewFallbackLayer = preview(
         title: "Launch Window",
         timeRangeText: "10:00 - 12:00",
-        remainingMinutes: 65,
         remainingTaskCount: 3,
-        deepLinkURL: ThingStructSystemRoute.today(
-            date: LocalDay(year: 2026, month: 3, day: 22),
-            blockID: UUID(),
-            taskID: UUID(),
-            source: .liveActivity
-        ).url?.absoluteString ?? "thingstruct://today",
         displayNote: "Base layer still owns the next meaningful work after the upper layer wrapped.",
-        displayTaskTitle: "Review progress",
-        displayTaskDateISO: "2026-03-22",
-        displayTaskBlockID: UUID().uuidString,
-        displayTaskID: UUID().uuidString,
+        actionableTaskTitle: "Review progress",
         displaySourceBlockTitle: "Afternoon",
         statusMessage: nil
     )
-}
 
-#Preview("Live Activity Caught Up", as: .content, using: ThingStructCurrentBlockActivityAttributes(
-    dateISO: "2026-03-22",
-    currentBlockID: UUID().uuidString
-)) {
-    ThingStructCurrentBlockLiveActivity()
-} contentStates: {
-    ThingStructCurrentBlockActivityAttributes.ContentState(
+    static let previewCaughtUp = preview(
         title: "AM",
         timeRangeText: "10:00 - 23:00",
-        remainingMinutes: 442,
         remainingTaskCount: 0,
-        deepLinkURL: ThingStructSystemRoute.today(
-            date: LocalDay(year: 2026, month: 3, day: 22),
-            blockID: UUID(),
-            taskID: nil,
-            source: .liveActivity
-        ).url?.absoluteString ?? "thingstruct://today",
         displayNote: nil,
-        displayTaskTitle: nil,
-        displayTaskDateISO: nil,
-        displayTaskBlockID: nil,
-        displayTaskID: nil,
+        actionableTaskTitle: nil,
         displaySourceBlockTitle: nil,
         statusMessage: "No incomplete tasks in this chain."
     )
-}
 
-#Preview("Live Activity Long Copy", as: .content, using: ThingStructCurrentBlockActivityAttributes(
-    dateISO: "2026-03-22",
-    currentBlockID: UUID().uuidString
-)) {
-    ThingStructCurrentBlockLiveActivity()
-} contentStates: {
-    ThingStructCurrentBlockActivityAttributes.ContentState(
+    static let previewLongCopy = preview(
         title: "Deep Focus Sprint For System Surface Polish",
         timeRangeText: "09:00 - 11:00",
-        remainingMinutes: 42,
         remainingTaskCount: 2,
-        deepLinkURL: ThingStructSystemRoute.today(
-            date: LocalDay(year: 2026, month: 3, day: 22),
-            blockID: UUID(),
-            taskID: UUID(),
-            source: .liveActivity
-        ).url?.absoluteString ?? "thingstruct://today",
         displayNote: "Keep the copy concise enough for Lock Screen, but still clear about why this work matters right now.",
-        displayTaskTitle: "Ship the lock screen layout without clipping the last line",
-        displayTaskDateISO: "2026-03-22",
-        displayTaskBlockID: UUID().uuidString,
-        displayTaskID: UUID().uuidString,
+        actionableTaskTitle: "Ship the lock screen layout without clipping the last line",
         displaySourceBlockTitle: nil,
         statusMessage: nil
     )
+}
+
+#Preview("Live Activity Top Layer", as: .content, using: liveActivityPreviewAttributes) {
+    ThingStructCurrentBlockLiveActivity()
+} contentStates: {
+    .previewTopLayer
+}
+
+#Preview("Live Activity Fallback Layer", as: .content, using: liveActivityPreviewAttributes) {
+    ThingStructCurrentBlockLiveActivity()
+} contentStates: {
+    .previewFallbackLayer
+}
+
+#Preview("Live Activity Caught Up", as: .content, using: liveActivityPreviewAttributes) {
+    ThingStructCurrentBlockLiveActivity()
+} contentStates: {
+    .previewCaughtUp
+}
+
+#Preview("Live Activity Long Copy", as: .content, using: liveActivityPreviewAttributes) {
+    ThingStructCurrentBlockLiveActivity()
+} contentStates: {
+    .previewLongCopy
+}
+
+#Preview("Dynamic Island Expanded", as: .dynamicIsland(.expanded), using: liveActivityPreviewAttributes) {
+    ThingStructCurrentBlockLiveActivity()
+} contentStates: {
+    .previewTopLayer
+}
+
+#Preview("Dynamic Island Compact", as: .dynamicIsland(.compact), using: liveActivityPreviewAttributes) {
+    ThingStructCurrentBlockLiveActivity()
+} contentStates: {
+    .previewFallbackLayer
+}
+
+#Preview("Dynamic Island Minimal", as: .dynamicIsland(.minimal), using: liveActivityPreviewAttributes) {
+    ThingStructCurrentBlockLiveActivity()
+} contentStates: {
+    .previewCaughtUp
 }

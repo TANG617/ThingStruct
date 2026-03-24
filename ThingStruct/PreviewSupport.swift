@@ -127,8 +127,14 @@ enum PreviewSupport {
     }
 
     static func sampleBlockDraftOverlay() -> BlockDraft {
-        let parentID = persistedSelectedBlock().id
-        var draft = BlockDraft.overlay(parentBlockID: parentID, layerIndex: 2)
+        let parent = persistedSelectedBlock()
+        var draft = BlockDraft.overlay(
+            parentBlockID: parent.id,
+            layerIndex: 2,
+            parentResolvedRange: parent.resolvedStartMinuteOfDay.flatMap { start in
+                parent.resolvedEndMinuteOfDay.map { end in (start, end) }
+            }
+        )
         draft.title = "Sprint"
         draft.note = "Short, intense burst inside the parent block."
         draft.relativeOffsetMinutes = 15
@@ -141,9 +147,21 @@ enum PreviewSupport {
     }
 
     static func sampleBlockDraftEdit() -> BlockDraft {
-        BlockDraft.editing(
+        let block = persistedSelectedBlock()
+        return BlockDraft.editing(
             detail: selectedBlockDetailModel(),
-            sourceBlock: persistedSelectedBlock()
+            sourceBlock: block,
+            parentResolvedRange: block.parentBlockID.flatMap { parentID in
+                let document = seededDocument()
+                guard
+                    let parent = document.dayPlan(for: referenceDay)?.blocks.first(where: { $0.id == parentID }),
+                    let start = parent.resolvedStartMinuteOfDay,
+                    let end = parent.resolvedEndMinuteOfDay
+                else {
+                    return nil
+                }
+                return (start, end)
+            }
         )
     }
 

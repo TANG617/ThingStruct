@@ -36,6 +36,10 @@ final class SystemSupportTests: XCTestCase {
         XCTAssertEqual(snapshot.displayTask?.taskID, overlayTaskID)
         XCTAssertEqual(snapshot.displayNote, "Top note")
         XCTAssertNil(snapshot.displaySourceBlockTitle)
+        XCTAssertEqual(
+            ThingStructSystemRoute(url: try XCTUnwrap(snapshot.tapURL())),
+            .now(source: .liveActivity)
+        )
     }
 
     func testLiveActivitySnapshotFallsBackAsBoundNoteAndTaskGroup() throws {
@@ -147,6 +151,10 @@ final class SystemSupportTests: XCTestCase {
         XCTAssertEqual(
             ThingStructSystemRoute(url: try XCTUnwrap(snapshot.deepLinkURL())),
             .today(date: day, blockID: overlayID, taskID: nil, source: .liveActivity)
+        )
+        XCTAssertEqual(
+            ThingStructSystemRoute(url: try XCTUnwrap(snapshot.tapURL())),
+            .now(source: .liveActivity)
         )
     }
 

@@ -78,7 +78,7 @@ struct TemplateEditorSheet: View {
                                 block: entry.block,
                                 resolvedRange: entry.resolvedRange,
                                 onEdit: { beginEditing(entry.block) },
-                                onAddOverlay: { beginOverlayCreation(for: entry.block) },
+                                onAddOverlay: { beginOverlayCreation(for: entry.block, parentResolvedRange: entry.resolvedRange) },
                                 onDelete: { deleteBlockCascade(entry.block.id) }
                             )
                         }
@@ -237,14 +237,24 @@ struct TemplateEditorSheet: View {
     private func beginEditing(_ block: BlockTemplate) {
         editorSession = TemplateBlockEditorSession(
             title: "Edit Block",
-            draft: .editing(templateBlock: block)
+            draft: .editing(
+                templateBlock: block,
+                parentResolvedRange: parentResolvedRange(for: block)
+            )
         )
     }
 
-    private func beginOverlayCreation(for block: BlockTemplate) {
+    private func beginOverlayCreation(
+        for block: BlockTemplate,
+        parentResolvedRange: (start: Int, end: Int)?
+    ) {
         editorSession = TemplateBlockEditorSession(
             title: block.layerIndex.newNextTimelineLayerActionTitle,
-            draft: .overlay(parentBlockID: block.id, layerIndex: block.layerIndex + 1)
+            draft: .overlay(
+                parentBlockID: block.id,
+                layerIndex: block.layerIndex + 1,
+                parentResolvedRange: parentResolvedRange
+            )
         )
     }
 
@@ -323,6 +333,20 @@ struct TemplateEditorSheet: View {
             },
             timing: draft.timing
         )
+    }
+
+    private func parentResolvedRange(for block: BlockTemplate) -> (start: Int, end: Int)? {
+        guard
+            let parentID = block.parentTemplateBlockID,
+            let preview = try? TemplateEngine.previewDayPlan(from: currentTemplate),
+            let parent = preview.blocks.first(where: { $0.id == parentID }),
+            let start = parent.resolvedStartMinuteOfDay,
+            let end = parent.resolvedEndMinuteOfDay
+        else {
+            return nil
+        }
+
+        return (start, end)
     }
 }
 
@@ -425,11 +449,8 @@ private extension TimeBlockTiming {
             }
             return startMinuteOfDay.formattedTime
 
-        case let .relative(startOffsetMinutes, requestedDurationMinutes):
-            if let requestedDurationMinutes {
-                return "+\(startOffsetMinutes)m / \(requestedDurationMinutes)m"
-            }
-            return "+\(startOffsetMinutes)m"
+        case .relative:
+            return "Relative to parent"
         }
     }
 }

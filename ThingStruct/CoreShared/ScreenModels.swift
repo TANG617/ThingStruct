@@ -132,7 +132,7 @@ public struct SavedTemplateSummary: Identifiable, Equatable, Sendable {
     public var previewTitles: [String]
 }
 
-public struct TomorrowScheduleSummary: Equatable, Sendable {
+public struct TemplateScheduleSummary: Equatable, Sendable {
     public var date: LocalDay
     public var weekday: Weekday
     public var weekdayTemplateID: UUID?
@@ -146,7 +146,8 @@ public struct TomorrowScheduleSummary: Equatable, Sendable {
 public struct TemplatesScreenModel: Equatable, Sendable {
     public var suggestedTemplates: [SuggestedTemplateSummary]
     public var savedTemplates: [SavedTemplateSummary]
-    public var tomorrowSchedule: TomorrowScheduleSummary
+    public var todaySchedule: TemplateScheduleSummary
+    public var tomorrowSchedule: TemplateScheduleSummary
 }
 
 // `ThingStructPresentation` is a pure mapper from domain state to UI state.
@@ -318,19 +319,6 @@ public enum ThingStructPresentation {
             )
         }
 
-        let tomorrow = referenceDay.adding(days: 1)
-        let selectedTemplate = try TemplateEngine.selectedSavedTemplate(
-            for: tomorrow,
-            savedTemplates: document.savedTemplates,
-            weekdayRules: document.weekdayRules,
-            overrides: document.overrides
-        )
-
-        let weekdayTemplateID = document.weekdayRules.first(where: { $0.weekday == tomorrow.weekday })?.savedTemplateID
-        let weekdayTemplateTitle = document.savedTemplates.first(where: { $0.id == weekdayTemplateID })?.title
-        let overrideTemplateID = document.overrides.first(where: { $0.date == tomorrow })?.savedTemplateID
-        let overrideTemplateTitle = document.savedTemplates.first(where: { $0.id == overrideTemplateID })?.title
-
         let saved = document.savedTemplates.map { template in
             SavedTemplateSummary(
                 id: template.id,
@@ -351,16 +339,36 @@ public enum ThingStructPresentation {
         return TemplatesScreenModel(
             suggestedTemplates: suggested,
             savedTemplates: saved,
-            tomorrowSchedule: TomorrowScheduleSummary(
-                date: tomorrow,
-                weekday: tomorrow.weekday,
-                weekdayTemplateID: weekdayTemplateID,
-                weekdayTemplateTitle: weekdayTemplateTitle,
-                overrideTemplateID: overrideTemplateID,
-                overrideTemplateTitle: overrideTemplateTitle,
-                finalTemplateID: selectedTemplate?.id,
-                finalTemplateTitle: selectedTemplate?.title
-            )
+            todaySchedule: try scheduleSummary(for: referenceDay, document: document),
+            tomorrowSchedule: try scheduleSummary(for: referenceDay.adding(days: 1), document: document)
+        )
+    }
+
+    private static func scheduleSummary(
+        for date: LocalDay,
+        document: ThingStructDocument
+    ) throws -> TemplateScheduleSummary {
+        let selectedTemplate = try TemplateEngine.selectedSavedTemplate(
+            for: date,
+            savedTemplates: document.savedTemplates,
+            weekdayRules: document.weekdayRules,
+            overrides: document.overrides
+        )
+
+        let weekdayTemplateID = document.weekdayRules.first(where: { $0.weekday == date.weekday })?.savedTemplateID
+        let weekdayTemplateTitle = document.savedTemplates.first(where: { $0.id == weekdayTemplateID })?.title
+        let overrideTemplateID = document.overrides.first(where: { $0.date == date })?.savedTemplateID
+        let overrideTemplateTitle = document.savedTemplates.first(where: { $0.id == overrideTemplateID })?.title
+
+        return TemplateScheduleSummary(
+            date: date,
+            weekday: date.weekday,
+            weekdayTemplateID: weekdayTemplateID,
+            weekdayTemplateTitle: weekdayTemplateTitle,
+            overrideTemplateID: overrideTemplateID,
+            overrideTemplateTitle: overrideTemplateTitle,
+            finalTemplateID: selectedTemplate?.id,
+            finalTemplateTitle: selectedTemplate?.title
         )
     }
 

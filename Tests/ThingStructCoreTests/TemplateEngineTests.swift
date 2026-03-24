@@ -309,4 +309,71 @@ final class TemplateEngineTests: XCTestCase {
         XCTAssertEqual(regenerated.blocks.first?.resolvedStartMinuteOfDay, 30)
         XCTAssertEqual(regenerated.blocks.first?.resolvedEndMinuteOfDay, 90)
     }
+
+    func testRebuildDayPlanPreservesExistingIDAndAllowsReplacingEditedTodayPlan() throws {
+        let today = LocalDay(year: 2026, month: 3, day: 19)
+        let generatedAt = Date(timeIntervalSince1970: 5_000)
+        let existingID = UUID()
+        let existing = DayPlan(
+            id: existingID,
+            date: today,
+            sourceSavedTemplateID: nil,
+            lastGeneratedAt: Date(timeIntervalSince1970: 10),
+            hasUserEdits: true,
+            blocks: [baseBlock(title: "Manual", start: 60, requestedEnd: 120)]
+        )
+        let template = SavedDayTemplate(
+            title: "Replacement Template",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: [
+                BlockTemplate(
+                    layerIndex: 0,
+                    title: "Generated Block",
+                    timing: .absolute(startMinuteOfDay: 180, requestedEndMinuteOfDay: 300)
+                )
+            ]
+        )
+
+        let rebuilt = try TemplateEngine.rebuildDayPlan(
+            for: today,
+            existingDayPlans: [existing],
+            savedTemplates: [template],
+            weekdayRules: [],
+            overrides: [DateTemplateOverride(date: today, savedTemplateID: template.id)],
+            generatedAt: generatedAt
+        )
+
+        XCTAssertEqual(rebuilt.id, existingID)
+        XCTAssertEqual(rebuilt.sourceSavedTemplateID, template.id)
+        XCTAssertEqual(rebuilt.lastGeneratedAt, generatedAt)
+        XCTAssertFalse(rebuilt.hasUserEdits)
+        XCTAssertEqual(rebuilt.blocks.map(\.title), ["Generated Block"])
+    }
+
+    func testRebuildDayPlanAllowsReplacingCompletedPlanAndFallsBackToEmptyWhenNoTemplateMatches() throws {
+        let today = LocalDay(year: 2026, month: 3, day: 19)
+        let existingID = UUID()
+        let existing = DayPlan(
+            id: existingID,
+            date: today,
+            sourceSavedTemplateID: UUID(),
+            lastGeneratedAt: Date(timeIntervalSince1970: 20),
+            hasUserEdits: true,
+            blocks: [baseBlock(title: "Completed", start: 0, requestedEnd: 60, tasks: [task("Done", completed: true)])]
+        )
+
+        let rebuilt = try TemplateEngine.rebuildDayPlan(
+            for: today,
+            existingDayPlans: [existing],
+            savedTemplates: [],
+            weekdayRules: [],
+            overrides: [],
+            generatedAt: Date(timeIntervalSince1970: 6_000)
+        )
+
+        XCTAssertEqual(rebuilt.id, existingID)
+        XCTAssertTrue(rebuilt.blocks.isEmpty)
+        XCTAssertNil(rebuilt.sourceSavedTemplateID)
+        XCTAssertFalse(rebuilt.hasUserEdits)
+    }
 }

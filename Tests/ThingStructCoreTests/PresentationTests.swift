@@ -242,9 +242,14 @@ final class PresentationTests: XCTestCase {
         XCTAssertEqual(model.selectedBlock?.parentBlockTitle, "Morning")
     }
 
-    func testTemplatesScreenModelUsesOverrideForTomorrowSummary() throws {
+    func testTemplatesScreenModelBuildsTodayAndTomorrowSummaries() throws {
         let referenceDay = LocalDay(year: 2026, month: 3, day: 19)
         let tomorrow = referenceDay.adding(days: 1)
+        let todayTemplate = SavedDayTemplate(
+            title: "Today Override",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: []
+        )
         let weekdayTemplate = SavedDayTemplate(
             title: "Weekday",
             sourceSuggestedTemplateID: UUID(),
@@ -259,13 +264,19 @@ final class PresentationTests: XCTestCase {
         let model = try ThingStructPresentation.templatesScreenModel(
             document: ThingStructDocument(
                 dayPlans: [],
-                savedTemplates: [weekdayTemplate, overrideTemplate],
+                savedTemplates: [todayTemplate, weekdayTemplate, overrideTemplate],
                 weekdayRules: [WeekdayTemplateRule(weekday: tomorrow.weekday, savedTemplateID: weekdayTemplate.id)],
-                overrides: [DateTemplateOverride(date: tomorrow, savedTemplateID: overrideTemplate.id)]
+                overrides: [
+                    DateTemplateOverride(date: referenceDay, savedTemplateID: todayTemplate.id),
+                    DateTemplateOverride(date: tomorrow, savedTemplateID: overrideTemplate.id)
+                ]
             ),
             referenceDay: referenceDay
         )
 
+        XCTAssertEqual(model.todaySchedule.date, referenceDay)
+        XCTAssertEqual(model.todaySchedule.overrideTemplateTitle, "Today Override")
+        XCTAssertEqual(model.todaySchedule.finalTemplateTitle, "Today Override")
         XCTAssertEqual(model.tomorrowSchedule.weekdayTemplateTitle, "Weekday")
         XCTAssertEqual(model.tomorrowSchedule.overrideTemplateTitle, "Override")
         XCTAssertEqual(model.tomorrowSchedule.finalTemplateTitle, "Override")

@@ -233,9 +233,12 @@ final class ThingStructStore {
         document.weekdayRules.first(where: { $0.weekday == weekday })?.savedTemplateID
     }
 
+    func overrideTemplateID(for date: LocalDay) -> UUID? {
+        document.overrides.first(where: { $0.date == date })?.savedTemplateID
+    }
+
     var tomorrowOverrideTemplateID: UUID? {
-        let tomorrow = LocalDay.today().adding(days: 1)
-        return document.overrides.first(where: { $0.date == tomorrow })?.savedTemplateID
+        overrideTemplateID(for: LocalDay.today().adding(days: 1))
     }
 
     // This is a raw persisted-block lookup. Unlike presentation models, it returns
@@ -450,11 +453,10 @@ final class ThingStructStore {
         }
     }
 
-    func setTomorrowOverride(templateID: UUID?) {
-        let tomorrow = LocalDay.today().adding(days: 1)
-        document.overrides.removeAll { $0.date == tomorrow }
+    func setOverride(templateID: UUID?, for date: LocalDay) {
+        document.overrides.removeAll { $0.date == date }
         if let templateID {
-            document.overrides.append(.init(date: tomorrow, savedTemplateID: templateID))
+            document.overrides.append(.init(date: date, savedTemplateID: templateID))
         }
 
         do {
@@ -462,6 +464,10 @@ final class ThingStructStore {
         } catch {
             presentError(error)
         }
+    }
+
+    func setTomorrowOverride(templateID: UUID?) {
+        setOverride(templateID: templateID, for: LocalDay.today().adding(days: 1))
     }
 
     func assignedWeekdays(for templateID: UUID) -> Set<Weekday> {
@@ -520,6 +526,25 @@ final class ThingStructStore {
                 selectedBlockID = nil
             }
             try commit(dayPlan: regenerated)
+        } catch {
+            presentError(error)
+        }
+    }
+
+    func rebuildDayPlan(for date: LocalDay, generatedAt: Date = .now) {
+        do {
+            let rebuilt = try TemplateEngine.rebuildDayPlan(
+                for: date,
+                existingDayPlans: document.dayPlans,
+                savedTemplates: document.savedTemplates,
+                weekdayRules: document.weekdayRules,
+                overrides: document.overrides,
+                generatedAt: generatedAt
+            )
+            if selectedDate == date {
+                selectedBlockID = nil
+            }
+            try commit(dayPlan: rebuilt)
         } catch {
             presentError(error)
         }

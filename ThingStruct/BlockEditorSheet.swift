@@ -79,6 +79,8 @@ struct BlockDraft: Equatable {
     var relativeOffsetMinutes: Int
     var hasRelativeDuration: Bool
     var relativeDurationMinutes: Int
+    var relativeParentStartMinuteOfDay: Int?
+    var relativeParentEndMinuteOfDay: Int?
     var reminders: [ReminderRule]
     var tasks: [TaskItem]
 
@@ -102,6 +104,67 @@ struct BlockDraft: Equatable {
 
     private var snappedRelativeDurationMinutes: Int {
         relativeDurationMinutes.snapped(toStep: 5, within: 5 ... 720)
+    }
+
+    var hasRelativeParentRange: Bool {
+        guard
+            let relativeParentStartMinuteOfDay,
+            let relativeParentEndMinuteOfDay
+        else {
+            return false
+        }
+
+        return relativeParentEndMinuteOfDay > relativeParentStartMinuteOfDay
+    }
+
+    var relativeStartMinuteOfDay: Int {
+        guard
+            let relativeParentStartMinuteOfDay,
+            let relativeParentEndMinuteOfDay
+        else {
+            return 0
+        }
+
+        let upperBound = max(relativeParentStartMinuteOfDay, relativeParentEndMinuteOfDay - 5)
+        return (relativeParentStartMinuteOfDay + snappedRelativeOffsetMinutes)
+            .snapped(toStep: 5, within: relativeParentStartMinuteOfDay ... upperBound)
+    }
+
+    var relativeEndMinuteOfDay: Int {
+        guard let relativeParentEndMinuteOfDay else {
+            return 0
+        }
+
+        if hasRelativeDuration {
+            let minimumEnd = min(relativeStartMinuteOfDay + 5, relativeParentEndMinuteOfDay)
+            return max(
+                min(relativeStartMinuteOfDay + snappedRelativeDurationMinutes, relativeParentEndMinuteOfDay),
+                minimumEnd
+            )
+        }
+
+        return relativeParentEndMinuteOfDay
+    }
+
+    var relativeStartValidRange: ClosedRange<Int>? {
+        guard
+            let relativeParentStartMinuteOfDay,
+            let relativeParentEndMinuteOfDay,
+            relativeParentEndMinuteOfDay > relativeParentStartMinuteOfDay
+        else {
+            return nil
+        }
+
+        return relativeParentStartMinuteOfDay ... max(relativeParentStartMinuteOfDay, relativeParentEndMinuteOfDay - 5)
+    }
+
+    var relativeEndValidRange: ClosedRange<Int>? {
+        guard let relativeParentEndMinuteOfDay else {
+            return nil
+        }
+
+        let minimumEnd = min(relativeStartMinuteOfDay + 5, relativeParentEndMinuteOfDay)
+        return minimumEnd ... relativeParentEndMinuteOfDay
     }
 
     var reminderPreset: ReminderPreset? {
@@ -149,6 +212,37 @@ struct BlockDraft: Equatable {
             )
         }
     }
+
+    mutating func setRelativeStartMinuteOfDay(_ minuteOfDay: Int) {
+        guard
+            let relativeParentStartMinuteOfDay,
+            let relativeStartValidRange
+        else {
+            return
+        }
+
+        let snappedStart = minuteOfDay.snapped(toStep: 5, within: relativeStartValidRange)
+        relativeOffsetMinutes = snappedStart - relativeParentStartMinuteOfDay
+
+        if hasRelativeDuration {
+            clampRelativeEndIfNeeded()
+        }
+    }
+
+    mutating func setRelativeEndMinuteOfDay(_ minuteOfDay: Int) {
+        guard let relativeEndValidRange else {
+            return
+        }
+
+        let snappedEnd = minuteOfDay.snapped(toStep: 5, within: relativeEndValidRange)
+        hasRelativeDuration = true
+        relativeDurationMinutes = max(snappedEnd - relativeStartMinuteOfDay, 5)
+    }
+
+    mutating func clampRelativeEndIfNeeded() {
+        guard hasRelativeDuration else { return }
+        setRelativeEndMinuteOfDay(relativeEndMinuteOfDay)
+    }
 }
 
 extension BlockDraft {
@@ -168,12 +262,18 @@ extension BlockDraft {
             relativeOffsetMinutes: 0,
             hasRelativeDuration: false,
             relativeDurationMinutes: 60,
+            relativeParentStartMinuteOfDay: nil,
+            relativeParentEndMinuteOfDay: nil,
             reminders: [],
             tasks: []
         )
     }
 
-    static func overlay(parentBlockID: UUID, layerIndex: Int) -> BlockDraft {
+    static func overlay(
+        parentBlockID: UUID,
+        layerIndex: Int,
+        parentResolvedRange: (start: Int, end: Int)? = nil
+    ) -> BlockDraft {
         BlockDraft(
             mode: .createOverlay(parentBlockID: parentBlockID, layerIndex: layerIndex),
             title: "",
@@ -185,12 +285,18 @@ extension BlockDraft {
             relativeOffsetMinutes: 0,
             hasRelativeDuration: true,
             relativeDurationMinutes: 60,
+            relativeParentStartMinuteOfDay: parentResolvedRange?.start,
+            relativeParentEndMinuteOfDay: parentResolvedRange?.end,
             reminders: [],
             tasks: []
         )
     }
 
-    static func editing(detail: BlockDetailModel, sourceBlock: TimeBlock) -> BlockDraft {
+    static func editing(
+        detail: BlockDetailModel,
+        sourceBlock: TimeBlock,
+        parentResolvedRange: (start: Int, end: Int)? = nil
+    ) -> BlockDraft {
         // Converting a stored block into a mutable draft is the inverse of `makeBlock`.
         let timingMode: BlockTimingDraftMode
         let absoluteStart: Int
@@ -236,12 +342,17 @@ extension BlockDraft {
             relativeOffsetMinutes: relativeOffset,
             hasRelativeDuration: hasDuration,
             relativeDurationMinutes: relativeDuration,
+            relativeParentStartMinuteOfDay: parentResolvedRange?.start,
+            relativeParentEndMinuteOfDay: parentResolvedRange?.end,
             reminders: sourceBlock.reminders,
             tasks: detail.tasks
         )
     }
 
-    static func editing(templateBlock: BlockTemplate) -> BlockDraft {
+    static func editing(
+        templateBlock: BlockTemplate,
+        parentResolvedRange: (start: Int, end: Int)? = nil
+    ) -> BlockDraft {
         let timingMode: BlockTimingDraftMode
         let absoluteStart: Int
         let absoluteEnd: Int
@@ -282,6 +393,8 @@ extension BlockDraft {
             relativeOffsetMinutes: relativeOffset,
             hasRelativeDuration: hasDuration,
             relativeDurationMinutes: relativeDuration,
+            relativeParentStartMinuteOfDay: parentResolvedRange?.start,
+            relativeParentEndMinuteOfDay: parentResolvedRange?.end,
             reminders: templateBlock.reminders,
             tasks: templateBlock.taskBlueprints
                 .sorted { lhs, rhs in
@@ -343,12 +456,25 @@ struct BlockEditorSheet: View {
                             )
                         }
                     } else {
-                        // Relative overlays are edited as offsets/durations because their
-                        // actual wall-clock position depends on the parent block.
-                        Stepper("Offset: \(draft.relativeOffsetMinutes) min", value: $draft.relativeOffsetMinutes, in: 0 ... 720, step: 5)
-                        Toggle("Duration", isOn: $draft.hasRelativeDuration)
-                        if draft.hasRelativeDuration {
-                            Stepper("Duration: \(draft.relativeDurationMinutes) min", value: $draft.relativeDurationMinutes, in: 5 ... 720, step: 5)
+                        if let relativeStartValidRange = draft.relativeStartValidRange {
+                            MinutePickerRow(
+                                title: "Start",
+                                minuteOfDay: relativeStartMinuteBinding,
+                                validRange: relativeStartValidRange
+                            )
+
+                            Toggle("Explicit End", isOn: $draft.hasRelativeDuration)
+                            if draft.hasRelativeDuration, let relativeEndValidRange = draft.relativeEndValidRange {
+                                MinutePickerRow(
+                                    title: "End",
+                                    minuteOfDay: relativeEndMinuteBinding,
+                                    validRange: relativeEndValidRange
+                                )
+                            }
+                        } else {
+                            Text("Relative timing becomes editable after the parent block resolves to a valid time range.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -419,6 +545,11 @@ struct BlockEditorSheet: View {
                     clampAbsoluteEndIfNeeded()
                 }
             }
+            .onChange(of: draft.hasRelativeDuration) { _, isEnabled in
+                if isEnabled {
+                    draft.clampRelativeEndIfNeeded()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -455,6 +586,20 @@ struct BlockEditorSheet: View {
         let snappedStart = draft.absoluteStartMinuteOfDay.snapped(toStep: 5, within: 0 ... (24 * 60 - 5))
         let minimumEnd = min(snappedStart + 5, 24 * 60)
         return minimumEnd ... (24 * 60)
+    }
+
+    private var relativeStartMinuteBinding: Binding<Int> {
+        Binding(
+            get: { draft.relativeStartMinuteOfDay },
+            set: { draft.setRelativeStartMinuteOfDay($0) }
+        )
+    }
+
+    private var relativeEndMinuteBinding: Binding<Int> {
+        Binding(
+            get: { draft.relativeEndMinuteOfDay },
+            set: { draft.setRelativeEndMinuteOfDay($0) }
+        )
     }
 
     private func clampAbsoluteEndIfNeeded() {

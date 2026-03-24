@@ -152,11 +152,23 @@ struct TemplatesRootView: View {
     @ViewBuilder
     private func scheduleSection(model: TemplatesScreenModel) -> some View {
         SectionHeader(
-            title: "Tomorrow",
-            subtitle: "See the final template first, then adjust weekday rules or a one-off override."
+            title: "Schedule",
+            subtitle: "Review which template applies today and tomorrow, then adjust weekday rules or a one-off override."
         )
 
-        TomorrowScheduleCard(schedule: model.tomorrowSchedule) {
+        TemplateScheduleCard(
+            schedule: model.todaySchedule,
+            heading: "Today",
+            actionTitle: "Rebuild Today's Plan"
+        ) {
+            store.rebuildDayPlan(for: model.todaySchedule.date)
+        }
+
+        TemplateScheduleCard(
+            schedule: model.tomorrowSchedule,
+            heading: "Tomorrow",
+            actionTitle: "Regenerate Tomorrow Plan"
+        ) {
             store.regenerateFutureDayPlan(for: model.tomorrowSchedule.date)
         }
 
@@ -164,7 +176,7 @@ struct TemplatesRootView: View {
             ContentUnavailableView(
                 "No Templates to Assign",
                 systemImage: "calendar.badge.exclamationmark",
-                description: Text("Save a suggested template before configuring weekday rules or a tomorrow override.")
+                description: Text("Save a suggested template before configuring weekday rules or a one-off override.")
             )
             .frame(maxWidth: .infinity)
             .padding(.top, 8)
@@ -174,9 +186,18 @@ struct TemplatesRootView: View {
                 selectionForWeekday: weekdaySelection(for:)
             )
 
-            TomorrowOverrideCard(
+            TemplateOverrideCard(
+                heading: "Today Override",
+                helpText: "Use this to replace today's materialized plan right away.",
                 templates: store.savedTemplates,
-                selection: tomorrowOverrideSelection
+                selection: overrideSelection(for: model.todaySchedule.date, shouldRebuildDayPlan: true)
+            )
+
+            TemplateOverrideCard(
+                heading: "Tomorrow Override",
+                helpText: "Use this only when tomorrow should temporarily ignore the weekday rule.",
+                templates: store.savedTemplates,
+                selection: overrideSelection(for: model.tomorrowSchedule.date, shouldRebuildDayPlan: false)
             )
         }
     }
@@ -202,10 +223,18 @@ struct TemplatesRootView: View {
         )
     }
 
-    private var tomorrowOverrideSelection: Binding<UUID?> {
+    private func overrideSelection(
+        for date: LocalDay,
+        shouldRebuildDayPlan: Bool
+    ) -> Binding<UUID?> {
         Binding(
-            get: { store.tomorrowOverrideTemplateID },
-            set: { store.setTomorrowOverride(templateID: $0) }
+            get: { store.overrideTemplateID(for: date) },
+            set: {
+                store.setOverride(templateID: $0, for: date)
+                if shouldRebuildDayPlan {
+                    store.rebuildDayPlan(for: date)
+                }
+            }
         )
     }
 }
@@ -457,17 +486,19 @@ private struct WeekdayRulesCard: View {
     }
 }
 
-private struct TomorrowOverrideCard: View {
+private struct TemplateOverrideCard: View {
+    let heading: String
+    let helpText: String
     let templates: [SavedDayTemplate]
     let selection: Binding<UUID?>
 
     var body: some View {
         TemplateCard {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Tomorrow Override")
+                Text(heading)
                     .font(.headline)
 
-                Text("Use this only when tomorrow should temporarily ignore the weekday rule.")
+                Text(helpText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -533,10 +564,12 @@ private struct SaveTemplateSheet: View {
     }
 }
 
-private struct TomorrowScheduleCard: View {
+private struct TemplateScheduleCard: View {
     @Environment(\.thingStructTintPreset) private var tintPreset
 
-    let schedule: TomorrowScheduleSummary
+    let schedule: TemplateScheduleSummary
+    let heading: String
+    let actionTitle: String
     let onRegenerate: () -> Void
 
     var body: some View {
@@ -559,7 +592,7 @@ private struct TomorrowScheduleCard: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Tomorrow Uses")
+                Text("\(heading) Uses")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
@@ -568,7 +601,7 @@ private struct TomorrowScheduleCard: View {
 
                 Text(schedule.overrideTemplateTitle != nil
                     ? "A one-off override is currently taking precedence over the weekday rule."
-                    : "Tomorrow will follow the weekday rule unless you set an override.")
+                    : "\(heading) will follow the weekday rule unless you set an override.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -583,7 +616,7 @@ private struct TomorrowScheduleCard: View {
             Button {
                 onRegenerate()
             } label: {
-                Label("Regenerate Tomorrow Plan", systemImage: "arrow.clockwise")
+                Label(actionTitle, systemImage: "arrow.clockwise")
             }
             .buttonStyle(.bordered)
         }
@@ -780,16 +813,20 @@ private struct TemplateBadge: View {
     SaveTemplateSheet(sourceDate: PreviewSupport.referenceDay) { _ in }
 }
 
-#Preview("Tomorrow Schedule Card") {
-    TomorrowScheduleCard(schedule: PreviewSupport.templatesModel().tomorrowSchedule) {
+#Preview("Today Schedule Card") {
+    TemplateScheduleCard(
+        schedule: PreviewSupport.templatesModel().todaySchedule,
+        heading: "Today",
+        actionTitle: "Rebuild Today's Plan"
+    ) {
     }
     .padding()
     .background(Color(uiColor: .systemGroupedBackground))
 }
 
 #Preview("Tomorrow Schedule Card - Override") {
-    TomorrowScheduleCard(
-        schedule: TomorrowScheduleSummary(
+    TemplateScheduleCard(
+        schedule: TemplateScheduleSummary(
             date: PreviewSupport.referenceDay.adding(days: 1),
             weekday: PreviewSupport.referenceDay.adding(days: 1).weekday,
             weekdayTemplateID: UUID(),
@@ -798,7 +835,9 @@ private struct TemplateBadge: View {
             overrideTemplateTitle: "Travel Day",
             finalTemplateID: UUID(),
             finalTemplateTitle: "Travel Day"
-        )
+        ),
+        heading: "Tomorrow",
+        actionTitle: "Regenerate Tomorrow Plan"
     ) {
     }
     .padding()
@@ -816,8 +855,10 @@ private struct TemplateBadge: View {
     .background(Color(uiColor: .systemGroupedBackground))
 }
 
-#Preview("Tomorrow Override Card") {
-    TomorrowOverrideCard(
+#Preview("Template Override Card") {
+    TemplateOverrideCard(
+        heading: "Today Override",
+        helpText: "Use this to replace today's materialized plan right away.",
         templates: PreviewSupport.seededDocument().savedTemplates,
         selection: .constant(PreviewSupport.seededDocument().savedTemplates.last?.id)
     )
