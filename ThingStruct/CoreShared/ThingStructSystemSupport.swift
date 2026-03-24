@@ -33,6 +33,49 @@ struct ThingStructSystemNowSnapshot: Equatable, Sendable {
     let statusMessage: String?
 }
 
+struct ThingStructSystemLiveActivitySnapshot: Equatable, Sendable {
+    let date: LocalDay
+    let minuteOfDay: Int
+    let currentBlock: ThingStructSystemBlockReference?
+    let displayBlock: ThingStructSystemBlockReference?
+    let displayTask: ThingStructSystemTaskReference?
+    let displayNote: String?
+    let displaySourceBlockTitle: String?
+    let remainingTaskCount: Int
+    let statusMessage: String?
+
+    func deepLinkURL(source: ThingStructSystemSource = .liveActivity) -> URL? {
+        if let displayTask {
+            return ThingStructSystemRoute.today(
+                date: displayTask.date,
+                blockID: displayTask.blockID,
+                taskID: displayTask.taskID,
+                source: source
+            ).url
+        }
+
+        if let displayBlock {
+            return ThingStructSystemRoute.today(
+                date: displayBlock.date,
+                blockID: displayBlock.blockID,
+                taskID: nil,
+                source: source
+            ).url
+        }
+
+        if let currentBlock {
+            return ThingStructSystemRoute.today(
+                date: currentBlock.date,
+                blockID: currentBlock.blockID,
+                taskID: nil,
+                source: source
+            ).url
+        }
+
+        return ThingStructSystemRoute.now(source: source).url
+    }
+}
+
 struct ThingStructSystemActionExecutor {
     let client: ThingStructSharedDocumentClient
 
@@ -73,31 +116,14 @@ struct ThingStructSystemActionExecutor {
 extension ThingStructSharedDocumentClient {
     func systemNowSnapshot(at date: Date) throws -> ThingStructSystemNowSnapshot {
         let now = try nowScreenModel(at: date)
-        let activeBlocks = now.activeChain.map { item in
-            let remainingTaskCount = now.taskSections
-                .filter { $0.id == item.id }
-                .flatMap(\.tasks)
-                .filter { !$0.isCompleted }
-                .count
+        return systemNowSnapshot(from: now)
+    }
 
-            return ThingStructSystemBlockReference(
-                date: now.date,
-                blockID: item.id,
-                title: item.title,
-                layerIndex: item.layerIndex,
-                startMinuteOfDay: item.startMinuteOfDay,
-                endMinuteOfDay: item.endMinuteOfDay,
-                timeRangeText: formattedTimeRange(
-                    startMinuteOfDay: item.startMinuteOfDay,
-                    endMinuteOfDay: item.endMinuteOfDay
-                ),
-                isBlank: item.isBlank,
-                isCurrent: item.isCurrent,
-                remainingTaskCount: remainingTaskCount
-            )
-        }
+    func systemNowSnapshot(from now: NowScreenModel) -> ThingStructSystemNowSnapshot {
+        let activeBlocks = blockReferences(from: now)
 
         let topTask = prioritizedTaskReference(from: now)
+        let remainingTaskCount = remainingTaskCount(from: now)
 
         return ThingStructSystemNowSnapshot(
             date: now.date,
@@ -105,11 +131,54 @@ extension ThingStructSharedDocumentClient {
             currentBlock: activeBlocks.first(where: \.isCurrent) ?? activeBlocks.first,
             activeBlocks: activeBlocks,
             topTask: topTask,
-            remainingTaskCount: now.taskSections
-                .flatMap(\.tasks)
-                .filter { !$0.isCompleted }
-                .count,
+            remainingTaskCount: remainingTaskCount,
             statusMessage: now.statusMessage
+        )
+    }
+
+    func liveActivitySnapshot(at date: Date) throws -> ThingStructSystemLiveActivitySnapshot {
+        let now = try nowScreenModel(at: date)
+        return liveActivitySnapshot(from: now)
+    }
+
+    func liveActivitySnapshot(from now: NowScreenModel) -> ThingStructSystemLiveActivitySnapshot {
+        let activeBlocks = blockReferences(from: now)
+        let blocksByID = Dictionary(uniqueKeysWithValues: activeBlocks.map { ($0.blockID, $0) })
+        let remainingTaskCount = remainingTaskCount(from: now)
+        let displaySelection = liveActivityDisplaySelection(
+            from: now,
+            blocksByID: blocksByID
+        )
+        let currentBlock = activeBlocks.first(where: \.isCurrent) ?? activeBlocks.first
+        let displaySourceBlockTitle: String?
+        if
+            let currentBlock,
+            let displayBlock = displaySelection?.block,
+            currentBlock.blockID != displayBlock.blockID
+        {
+            displaySourceBlockTitle = displayBlock.title
+        } else {
+            displaySourceBlockTitle = nil
+        }
+        let statusMessage: String?
+        if displaySelection != nil {
+            statusMessage = nil
+        } else if remainingTaskCount == 0, currentBlock != nil {
+            statusMessage = "No incomplete tasks in this chain."
+        } else {
+            statusMessage = now.statusMessage
+        }
+
+        return ThingStructSystemLiveActivitySnapshot(
+            date: now.date,
+            minuteOfDay: now.minuteOfDay,
+            currentBlock: currentBlock,
+            displayBlock: displaySelection?.block,
+            displayTask: displaySelection?.task,
+            displayNote: displaySelection?.note,
+            displaySourceBlockTitle: displaySourceBlockTitle,
+            remainingTaskCount: remainingTaskCount,
+            statusMessage: statusMessage
         )
     }
 
@@ -130,7 +199,7 @@ extension ThingStructSharedDocumentClient {
             return nil
         }
 
-        let changed = try toggleTask(
+        let changed = try completeTask(
             on: task.date,
             blockID: task.blockID,
             taskID: task.taskID,
@@ -179,7 +248,7 @@ extension ThingStructSharedDocumentClient {
             return nil
         }
 
-        let changed = try toggleTask(
+        let changed = try completeTask(
             on: date,
             blockID: blockID,
             taskID: task.taskID,
@@ -216,6 +285,81 @@ extension ThingStructSharedDocumentClient {
         }
 
         return nil
+    }
+
+    private func blockReferences(
+        from now: NowScreenModel
+    ) -> [ThingStructSystemBlockReference] {
+        now.activeChain.map { item in
+            let remainingTaskCount = now.taskSections
+                .filter { $0.id == item.id }
+                .flatMap(\.tasks)
+                .filter { !$0.isCompleted }
+                .count
+
+            return ThingStructSystemBlockReference(
+                date: now.date,
+                blockID: item.id,
+                title: item.title,
+                layerIndex: item.layerIndex,
+                startMinuteOfDay: item.startMinuteOfDay,
+                endMinuteOfDay: item.endMinuteOfDay,
+                timeRangeText: formattedTimeRange(
+                    startMinuteOfDay: item.startMinuteOfDay,
+                    endMinuteOfDay: item.endMinuteOfDay
+                ),
+                isBlank: item.isBlank,
+                isCurrent: item.isCurrent,
+                remainingTaskCount: remainingTaskCount
+            )
+        }
+    }
+
+    private func liveActivityDisplaySelection(
+        from now: NowScreenModel,
+        blocksByID: [UUID: ThingStructSystemBlockReference]
+    ) -> (
+        block: ThingStructSystemBlockReference,
+        task: ThingStructSystemTaskReference,
+        note: String?
+    )? {
+        let tasksByBlockID = Dictionary(uniqueKeysWithValues: now.taskSections.map { ($0.id, $0) })
+        let notesByBlockID = Dictionary(uniqueKeysWithValues: now.noteSections.map { ($0.id, $0.note) })
+
+        for item in now.activeChain {
+            guard
+                let section = tasksByBlockID[item.id],
+                let task = section.tasks.first(where: { !$0.isCompleted }),
+                let block = blocksByID[item.id]
+            else {
+                continue
+            }
+
+            return (
+                block: block,
+                task: ThingStructSystemTaskReference(
+                    date: now.date,
+                    blockID: section.id,
+                    taskID: task.id,
+                    title: task.title,
+                    blockTitle: section.title,
+                    layerIndex: section.layerIndex,
+                    isCurrentBlock: section.isCurrent
+                ),
+                note: notesByBlockID[item.id]
+            )
+        }
+
+        return nil
+    }
+
+    private func remainingTaskCount(
+        from now: NowScreenModel
+    ) -> Int {
+        now.taskSections
+            .flatMap(\.tasks)
+            .filter { !$0.isCompleted }
+            .count
     }
 
     private func formattedTimeRange(

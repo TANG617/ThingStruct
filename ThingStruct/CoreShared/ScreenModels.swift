@@ -71,6 +71,25 @@ public struct TodayOpenSlotItem: Identifiable, Equatable, Sendable {
     }
 }
 
+public enum TodayAddOptionKind: Equatable, Sendable {
+    case base
+    case overlay(parentBlockID: UUID, layerIndex: Int)
+}
+
+public struct TodayAddOption: Identifiable, Equatable, Sendable {
+    public var title: String
+    public var kind: TodayAddOptionKind
+
+    public var id: String {
+        switch kind {
+        case .base:
+            return "base"
+        case let .overlay(parentBlockID, layerIndex):
+            return "overlay-\(parentBlockID.uuidString)-\(layerIndex)"
+        }
+    }
+}
+
 public struct BlockDetailModel: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var title: String
@@ -88,6 +107,7 @@ public struct TodayScreenModel: Equatable, Sendable {
     public var date: LocalDay
     public var blocks: [TimelineBlockItem]
     public var openSlots: [TodayOpenSlotItem]
+    public var addOptions: [TodayAddOption]
     public var selectedBlock: BlockDetailModel?
     public var initialScrollMinute: Int
     public var initialFocusBlockID: UUID?
@@ -237,6 +257,11 @@ public enum ThingStructPresentation {
             }
             .sorted(by: timelineSort)
 
+        let addOptions = makeTodayAddOptions(
+            selectedBlockID: selectedBlockID,
+            blocks: runtimePlan.blocks
+        )
+
         // Focus selection is a presentation decision:
         // explicit user selection wins; if we're on "today now", prefer the current
         // active *user* block; otherwise fall back to the first real block.
@@ -267,6 +292,7 @@ public enum ThingStructPresentation {
             date: date,
             blocks: sortedBlocks,
             openSlots: openSlots,
+            addOptions: addOptions,
             selectedBlock: selectedBlock,
             initialScrollMinute: fallbackMinute,
             initialFocusBlockID: focusedBlockID
@@ -372,6 +398,55 @@ public enum ThingStructPresentation {
             parentBlockTitle: parentTitle
         )
     }
+}
+
+private nonisolated func makeTodayAddOptions(
+    selectedBlockID: UUID?,
+    blocks: [TimeBlock]
+) -> [TodayAddOption] {
+    var options = [
+        TodayAddOption(
+            title: "New Base Block",
+            kind: .base
+        )
+    ]
+
+    guard let selectedBlockID else {
+        return options
+    }
+
+    let selectableBlocks = blocks.filter { !$0.isCancelled && !$0.isBlankBaseBlock }
+    let blocksByID = Dictionary(uniqueKeysWithValues: selectableBlocks.map { ($0.id, $0) })
+    guard let selectedBlock = blocksByID[selectedBlockID] else {
+        return options
+    }
+
+    var path: [TimeBlock] = []
+    var cursor: TimeBlock? = selectedBlock
+
+    while let block = cursor {
+        path.append(block)
+        cursor = block.parentBlockID.flatMap { blocksByID[$0] }
+    }
+
+    options.append(
+        contentsOf: path.reversed().map { block in
+            TodayAddOption(
+                title: "New \(nextTimelineLayerTitle(after: block.layerIndex)) Overlay in \(block.title)",
+                kind: .overlay(
+                    parentBlockID: block.id,
+                    layerIndex: block.layerIndex + 1
+                )
+            )
+        }
+    )
+
+    return options
+}
+
+private nonisolated func nextTimelineLayerTitle(after layerIndex: Int) -> String {
+    let nextLayerIndex = layerIndex + 1
+    return nextLayerIndex == 0 ? "Base" : "L\(nextLayerIndex)"
 }
 
 private nonisolated func makeNowChainItems(

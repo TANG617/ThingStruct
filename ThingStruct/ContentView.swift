@@ -60,6 +60,15 @@ struct ContentView: View {
     ContentView(store: PreviewSupport.store(tab: .today))
 }
 
-#Preview("Content - Templates Tab") {
-    ContentView(store: PreviewSupport.store(tab: .templates))
+#Preview("Content - Settings Tab") {
+    ContentView(store: PreviewSupport.store(tab: .settings))
+}
+
+#Preview("Content - Templates in Settings") {
+    ContentView(
+        store: PreviewSupport.store(
+            tab: .settings,
+            settingsNavigationPath: [.templates]
+        )
+    )
 }

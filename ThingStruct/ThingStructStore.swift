@@ -7,7 +7,7 @@ import WidgetKit
 enum RootTab: Hashable {
     case now
     case today
-    case templates
+    case settings
 }
 
 // `ThingStructStore` is the app's UI-facing state container.
@@ -35,6 +35,8 @@ final class ThingStructStore {
             selectedBlockID = nil
         }
     }
+    // The Settings tab owns nested destinations such as Templates.
+    var settingsNavigationPath: [SettingsDestination] = []
     var selectedDate: LocalDay = LocalDay.today()
     var selectedBlockID: UUID?
     var isLoaded = false
@@ -113,6 +115,11 @@ final class ThingStructStore {
 
     func selectBlock(_ blockID: UUID?) {
         selectedBlockID = blockID
+    }
+
+    func openSettings(destination: SettingsDestination? = nil) {
+        selectedTab = .settings
+        settingsNavigationPath = destination.map { [$0] } ?? []
     }
 
     // Error routing is centralized so screens can stay focused on layout.

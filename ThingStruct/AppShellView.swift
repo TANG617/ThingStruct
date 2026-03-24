@@ -1,6 +1,6 @@
 import SwiftUI
 
-// `AppShellView` is the global frame around the three feature screens.
+// `AppShellView` is the global frame around the three top-level screens.
 // It owns navigation between tabs and shows app-wide errors.
 //
 // Architecturally, this is close to a "shell" or "frame window" in desktop UI.
@@ -29,11 +29,11 @@ struct AppShellView: View {
                 }
                 .tag(RootTab.today)
 
-            TemplatesRootView()
+            SettingsRootView()
                 .tabItem {
-                    Label("Templates", systemImage: "square.stack.3d.up")
+                    Label("Settings", systemImage: "gearshape")
                 }
-                .tag(RootTab.templates)
+                .tag(RootTab.settings)
         }
         // Global error presentation lives here so feature screens can report errors
         // without each screen reinventing its own alert state.
@@ -63,9 +63,19 @@ struct AppShellView: View {
         .environment(PreviewSupport.store(tab: .today))
 }
 
-#Preview("App Shell - Templates") {
+#Preview("App Shell - Settings") {
     AppShellView()
-        .environment(PreviewSupport.store(tab: .templates))
+        .environment(PreviewSupport.store(tab: .settings))
+}
+
+#Preview("App Shell - Templates in Settings") {
+    AppShellView()
+        .environment(
+            PreviewSupport.store(
+                tab: .settings,
+                settingsNavigationPath: [.templates]
+            )
+        )
 }
 
 #Preview("App Shell - Error Alert") {

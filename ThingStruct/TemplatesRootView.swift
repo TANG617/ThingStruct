@@ -21,42 +21,40 @@ struct TemplatesRootView: View {
     @State private var sheet: TemplatesSheet?
 
     var body: some View {
-        NavigationStack {
-            RootScreenContainer(
-                isLoaded: store.isLoaded,
-                loadingTitle: "Loading Templates",
-                loadingSystemImage: "square.stack.3d.up",
-                loadingDescription: "Preparing suggested templates and tomorrow's schedule.",
-                errorTitle: "Unable to Load Templates",
-                retry: store.reload
-            ) {
-                try store.templatesScreenModel()
-            } content: { model in
-                VStack(spacing: 0) {
-                    sectionPicker
+        RootScreenContainer(
+            isLoaded: store.isLoaded,
+            loadingTitle: "Loading Templates",
+            loadingSystemImage: "square.stack.3d.up",
+            loadingDescription: "Preparing suggested templates and tomorrow's schedule.",
+            errorTitle: "Unable to Load Templates",
+            retry: store.reload
+        ) {
+            try store.templatesScreenModel()
+        } content: { model in
+            VStack(spacing: 0) {
+                sectionPicker
 
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 24) {
-                            switch selectedSection {
-                            case .suggested:
-                                suggestedSection(model: model)
-                            case .saved:
-                                savedSection(model: model)
-                            case .schedule:
-                                scheduleSection(model: model)
-                            }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 24) {
+                        switch selectedSection {
+                        case .suggested:
+                            suggestedSection(model: model)
+                        case .saved:
+                            savedSection(model: model)
+                        case .schedule:
+                            scheduleSection(model: model)
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                        .padding(.bottom, 32)
                     }
-                    .background(Color(uiColor: .systemGroupedBackground))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 32)
                 }
                 .background(Color(uiColor: .systemGroupedBackground))
             }
-            .navigationTitle("Templates")
-            .navigationBarTitleDisplayMode(.inline)
+            .background(Color(uiColor: .systemGroupedBackground))
         }
+        .navigationTitle("Templates")
+        .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $sheet) { sheet in
             switch sheet {
             case let .save(sourceDate):
@@ -719,23 +717,29 @@ private struct TemplateBadge: View {
 }
 
 #Preview("Templates Root") {
-    TemplatesRootView()
-        .environment(PreviewSupport.store(tab: .templates))
+    NavigationStack {
+        TemplatesRootView()
+    }
+    .environment(PreviewSupport.store(tab: .settings))
 }
 
 #Preview("Templates Root - Empty") {
-    TemplatesRootView()
-        .environment(
-            PreviewSupport.store(
-                tab: .templates,
-                document: ThingStructDocument()
-            )
+    NavigationStack {
+        TemplatesRootView()
+    }
+    .environment(
+        PreviewSupport.store(
+            tab: .settings,
+            document: ThingStructDocument()
         )
+    )
 }
 
 #Preview("Templates Root - Loading") {
-    TemplatesRootView()
-        .environment(PreviewSupport.store(tab: .templates, loaded: false))
+    NavigationStack {
+        TemplatesRootView()
+    }
+    .environment(PreviewSupport.store(tab: .settings, loaded: false))
 }
 
 #Preview("Suggested Template Card") {

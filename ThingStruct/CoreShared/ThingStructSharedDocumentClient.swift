@@ -154,6 +154,65 @@ struct ThingStructSharedDocumentClient {
         return outcome.value
     }
 
+    @discardableResult
+    func completeTask(
+        on date: LocalDay,
+        blockID: UUID,
+        taskID: UUID,
+        completedAt: Date = .now
+    ) throws -> Bool {
+        guard try load() != nil else {
+            return false
+        }
+
+        let outcome = try mutate { document in
+            try completeTask(
+                on: date,
+                blockID: blockID,
+                taskID: taskID,
+                completedAt: completedAt,
+                in: &document
+            )
+        }
+
+        return outcome.value
+    }
+
+    @discardableResult
+    func completeTask(
+        on date: LocalDay,
+        blockID: UUID,
+        taskID: UUID,
+        completedAt: Date = .now,
+        in document: inout ThingStructDocument
+    ) throws -> Bool {
+        let prepared = try ensureMaterializedDocument(
+            from: document,
+            for: date,
+            generatedAt: completedAt
+        )
+        document = prepared.document
+
+        guard let planIndex = document.dayPlans.firstIndex(where: { $0.date == date }) else {
+            return false
+        }
+        guard let blockIndex = document.dayPlans[planIndex].blocks.firstIndex(where: { $0.id == blockID }) else {
+            return false
+        }
+        guard let taskIndex = document.dayPlans[planIndex].blocks[blockIndex].tasks.firstIndex(where: { $0.id == taskID }) else {
+            return false
+        }
+
+        guard !document.dayPlans[planIndex].blocks[blockIndex].tasks[taskIndex].isCompleted else {
+            return false
+        }
+
+        document.dayPlans[planIndex].blocks[blockIndex].tasks[taskIndex].isCompleted = true
+        document.dayPlans[planIndex].blocks[blockIndex].tasks[taskIndex].completedAt = completedAt
+        document.dayPlans[planIndex].hasUserEdits = true
+        return true
+    }
+
     func documentPreparedForNow(at date: Date) throws -> ThingStructDocument {
         let localDay = LocalDay(date: date)
 

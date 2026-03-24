@@ -16,8 +16,9 @@ struct TodayRootView: View {
     @Environment(ThingStructStore.self) private var store
     // `@State` stores view-local mutable state that survives body recomputation.
     @State private var editorSession: BlockEditorSession?
-    @State private var presentedDetail: PresentedTodayBlockDetail?
     @State private var jumpToCurrentTrigger = 0
+    @State private var scrollToBlockTrigger = 0
+    @State private var scrollToBlockID: UUID?
 
     var body: some View {
         // `NavigationStack` is the native container that provides titles, toolbars,
@@ -38,6 +39,8 @@ struct TodayRootView: View {
                     selectedBlockID: store.selectedBlockID,
                     currentMinute: store.currentMinuteOnSelectedDate(),
                     jumpToCurrentTrigger: jumpToCurrentTrigger,
+                    scrollToBlockID: scrollToBlockID,
+                    scrollToBlockTrigger: scrollToBlockTrigger,
                     timingResolver: { blockID in
                         store.persistedBlock(on: store.selectedDate, blockID: blockID)?.timing
                     },
@@ -66,73 +69,65 @@ struct TodayRootView: View {
                         draft.title = "New Block"
                         editorSession = BlockEditorSession(
                             title: "New Base Block",
-                            draft: draft
+                            draft: draft,
+                            scrollToSavedBlockOnSave: true
                         )
                     },
-                    onSelect: handleSelection
+                    onSelect: handleSelection,
+                    onBeginEdit: beginEditingBlock
                 )
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            store.moveSelectedDate(by: -1)
+                        } label: {
+                            Image(systemName: "chevron.left")
+                        }
+                    }
+
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if store.selectedDate == .today() {
+                            Button {
+                                jumpToCurrent()
+                            } label: {
+                                Image(systemName: "location")
+                            }
+                        } else {
+                            Button("Today") {
+                                store.selectDate(.today())
+                            }
+                        }
+
+                        Menu {
+                            ForEach(model.addOptions) { option in
+                                Button {
+                                    beginCreate(from: option)
+                                } label: {
+                                    Label(option.title, systemImage: systemImageName(for: option.kind))
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+
+                        Button {
+                            store.moveSelectedDate(by: 1)
+                        } label: {
+                            Image(systemName: "chevron.right")
+                        }
+                    }
+                }
             }
             .navigationTitle(store.selectedDate.titleText)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        store.moveSelectedDate(by: -1)
-                    } label: {
-                        Image(systemName: "chevron.left")
-                    }
-                }
-
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if store.selectedDate == .today() {
-                        Button {
-                            jumpToCurrent()
-                        } label: {
-                            Image(systemName: "location")
-                        }
-                    } else {
-                        Button("Today") {
-                            store.selectDate(.today())
-                        }
-                    }
-
-                    Button {
-                        editorSession = BlockEditorSession(
-                            title: "New Base Block",
-                            draft: .base()
-                        )
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-
-                    Button {
-                        store.moveSelectedDate(by: 1)
-                    } label: {
-                        Image(systemName: "chevron.right")
-                    }
-                }
-            }
-        }
-        .onAppear {
-            syncPresentedDetail(with: store.selectedBlockID)
-        }
-        .onChange(of: store.selectedBlockID) { _, blockID in
-            syncPresentedDetail(with: blockID)
-        }
-        .onChange(of: editorSession?.id) { _, editorSessionID in
-            guard editorSessionID == nil else { return }
-            syncPresentedDetail(with: store.selectedBlockID)
         }
         .sheet(item: $editorSession) { session in
-            TodayBlockEditorPresenter(session: session)
-        }
-        .sheet(item: $presentedDetail, onDismiss: {
-            if editorSession == nil {
-                store.selectBlock(nil)
+            TodayBlockEditorPresenter(session: session) { savedBlockID, shouldScrollToSavedBlock in
+                handleSavedBlock(
+                    savedBlockID,
+                    shouldScrollToSavedBlock: shouldScrollToSavedBlock
+                )
             }
-        }) { presented in
-            TodayBlockDetailSheet(blockID: presented.id)
-                .environment(store)
         }
     }
 
@@ -142,22 +137,61 @@ struct TodayRootView: View {
         // declarative view hierarchy.
         let blockID = store.currentActiveBlockID()
         store.selectBlock(blockID)
-        syncPresentedDetail(with: blockID)
         jumpToCurrentTrigger += 1
     }
 
     private func handleSelection(_ blockID: UUID?) {
         store.selectBlock(blockID)
-        syncPresentedDetail(with: blockID)
     }
 
-    private func syncPresentedDetail(with blockID: UUID?) {
-        guard editorSession == nil else { return }
+    private func beginCreate(from option: TodayAddOption) {
+        switch option.kind {
+        case .base:
+            editorSession = BlockEditorSession(
+                title: option.title,
+                draft: .base(),
+                scrollToSavedBlockOnSave: true
+            )
 
-        if let blockID {
-            presentedDetail = PresentedTodayBlockDetail(id: blockID)
-        } else {
-            presentedDetail = nil
+        case let .overlay(parentBlockID, layerIndex):
+            editorSession = BlockEditorSession(
+                title: option.title,
+                draft: .overlay(parentBlockID: parentBlockID, layerIndex: layerIndex),
+                scrollToSavedBlockOnSave: true
+            )
+        }
+    }
+
+    private func beginEditingBlock(_ blockID: UUID) {
+        store.selectBlock(blockID)
+
+        guard
+            let detail = try? store.blockDetailModel(on: store.selectedDate, blockID: blockID),
+            let sourceBlock = store.persistedBlock(on: store.selectedDate, blockID: blockID)
+        else {
+            return
+        }
+
+        editorSession = BlockEditorSession(
+            title: "Edit Block",
+            draft: .editing(detail: detail, sourceBlock: sourceBlock)
+        )
+    }
+
+    private func handleSavedBlock(_ blockID: UUID, shouldScrollToSavedBlock: Bool) {
+        store.selectBlock(blockID)
+        guard shouldScrollToSavedBlock else { return }
+
+        scrollToBlockID = blockID
+        scrollToBlockTrigger += 1
+    }
+
+    private func systemImageName(for kind: TodayAddOptionKind) -> String {
+        switch kind {
+        case .base:
+            return "rectangle.badge.plus"
+        case .overlay:
+            return "square.stack.badge.plus"
         }
     }
 }
@@ -167,12 +201,15 @@ private struct TodayTimelineView: View {
     let selectedBlockID: UUID?
     let currentMinute: Int?
     let jumpToCurrentTrigger: Int
+    let scrollToBlockID: UUID?
+    let scrollToBlockTrigger: Int
     let timingResolver: (UUID) -> TimeBlockTiming?
     let resizeBounds: (UUID) -> BlockResizeBounds?
     let onResizeBlockStart: (UUID, Int) -> Void
     let onResizeBlockEnd: (UUID, Int) -> Void
     let onCreateBaseInOpenSlot: (Int, Int) -> Void
     let onSelect: (UUID?) -> Void
+    let onBeginEdit: (UUID) -> Void
 
     @State private var lastInitialScrollDate: LocalDay?
     @State private var resizePreview: TimelineResizePreview?
@@ -242,10 +279,10 @@ private struct TodayTimelineView: View {
                     scroll(to: currentMinute, anchor: .center, proxy: proxy, animated: true)
                 }
             }
-            .onChange(of: selectedBlockID) { _, blockID in
-                guard let blockID else { return }
+            .onChange(of: scrollToBlockTrigger) { _, _ in
+                guard let scrollToBlockID else { return }
                 scroll(
-                    toBlock: blockID,
+                    toBlock: scrollToBlockID,
                     fallbackMinute: currentMinute ?? model.initialScrollMinute,
                     anchor: .center,
                     proxy: proxy,
@@ -329,7 +366,8 @@ private struct TodayTimelineView: View {
             onResizeStart: beginResize(for:edge:),
             onResizeChange: updateResizePreview(for:edge:verticalTranslation:),
             onResizeEnd: commitResize(for:edge:),
-            onSelect: onSelect
+            onSelect: onSelect,
+            onBeginEdit: onBeginEdit
         )
         .frame(width: blockWidth, alignment: .leading)
         .offset(x: labelWidth + trackInset, y: y)
@@ -552,10 +590,6 @@ private struct TimelineResizePreview {
     var proposedEndMinuteOfDay: Int
 }
 
-private struct PresentedTodayBlockDetail: Identifiable, Equatable {
-    let id: UUID
-}
-
 @MainActor
 private enum TodayHaptics {
     static func resizeActivated() {
@@ -634,11 +668,14 @@ private struct TimelineBlockCard: View {
     let onResizeChange: (UUID, TimelineResizeEdge, CGFloat) -> Void
     let onResizeEnd: (UUID, TimelineResizeEdge) -> Void
     let onSelect: (UUID?) -> Void
+    let onBeginEdit: (UUID) -> Void
 
     private let minimumHeight: CGFloat = 52
     private let childInset: CGFloat = 16
     private let childGap: CGFloat = 8
     private let maximumVerticalGap: CGFloat = 3
+    private let resizeHandleHitHeight: CGFloat = 24
+    private let resizeHandleEdgePadding: CGFloat = 8
 
     private var block: TimelineBlockItem { node.block }
 
@@ -748,10 +785,7 @@ private struct TimelineBlockCard: View {
             .frame(height: headerBackdropHeight)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            selectBlock()
-        }
+        .allowsHitTesting(false)
     }
 
     var body: some View {
@@ -765,10 +799,8 @@ private struct TimelineBlockCard: View {
                     // by embedding more `TimelineBlockCard` views inside itself.
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .fill(backgroundColor)
-                        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .onTapGesture {
-                            selectBlock()
-                        }
+
+                    selectionSurface
 
                     ForEach(Array(node.children), id: \.id) { child in
                         childCard(
@@ -895,7 +927,8 @@ private struct TimelineBlockCard: View {
             onResizeStart: onResizeStart,
             onResizeChange: onResizeChange,
             onResizeEnd: onResizeEnd,
-            onSelect: onSelect
+            onSelect: onSelect,
+            onBeginEdit: onBeginEdit
         )
         .frame(width: width)
         .offset(
@@ -931,15 +964,34 @@ private struct TimelineBlockCard: View {
         )
     }
 
+    private var selectionSurface: some View {
+        Color.clear
+            .padding(.top, resizeHandleHitHeight + resizeHandleEdgePadding)
+            .padding(.bottom, resizeHandleHitHeight + resizeHandleEdgePadding)
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .onTapGesture {
+                selectBlock()
+            }
+            .simultaneousGesture(editGesture)
+    }
+
     private func selectBlock() {
         // Parent cards need explicit tap targets because nested child cards and resize
         // handles sit above the container and can otherwise swallow the selection tap.
         onSelect(block.id)
     }
 
+    private var editGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.6, maximumDistance: 12)
+            .onEnded { _ in
+                selectBlock()
+                onBeginEdit(block.id)
+            }
+    }
+
     private func resizeHandle(edge: TimelineResizeEdge) -> some View {
         Color.clear
-            .frame(height: 24)
+            .frame(height: resizeHandleHitHeight)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
             .highPriorityGesture(resizeGesture(edge: edge))
@@ -949,7 +1001,7 @@ private struct TimelineBlockCard: View {
     private func resizeGesture(edge: TimelineResizeEdge) -> some Gesture {
         // `sequenced(before:)` lets us model "long press, then drag" as one gesture.
         // This avoids accidental resizes during normal scrolling/tapping.
-        LongPressGesture(minimumDuration: 0.35)
+        LongPressGesture(minimumDuration: 0.2, maximumDistance: 12)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .onChanged { value in
                 switch value {
@@ -1011,207 +1063,11 @@ private struct TimelineOpenSlotEntry: View {
     }
 }
 
-private struct TodayBlockDetailSheet: View {
-    @Environment(ThingStructStore.self) private var store
-    @State private var editorSession: BlockEditorSession?
-    let blockID: UUID
-
-    var body: some View {
-        Group {
-            if let block = currentBlock {
-                // The detail sheet stays intentionally small and native-looking.
-                // It is a contextual inspector, not a full-screen destination.
-                TodayBlockDetailContent(
-                    block: block,
-                    onEdit: { beginEditing(block) },
-                    onAddOverlay: { beginOverlayCreation(for: block) }
-                )
-            } else {
-                ContentUnavailableView(
-                    "Block Unavailable",
-                    systemImage: "rectangle.slash",
-                    description: Text("This block is no longer available on the selected day.")
-                )
-                .padding(.horizontal, 20)
-            }
-        }
-        .presentationDetents([.height(272), .medium])
-        .presentationDragIndicator(.visible)
-        .presentationContentInteraction(.scrolls)
-        .sheet(item: $editorSession) { session in
-            TodayBlockEditorPresenter(session: session)
-        }
-    }
-
-    private var currentBlock: BlockDetailModel? {
-        if store.selectedBlockID == blockID {
-            return store.selectedBlockDetail
-        }
-
-        return try? store.blockDetailModel(on: store.selectedDate, blockID: blockID)
-    }
-
-    private func beginEditing(_ block: BlockDetailModel) {
-        // The detail model is presentation data. To build an editor draft we re-read
-        // the persisted source block so timing information matches what is actually stored.
-        guard let sourceBlock = store.persistedBlock(on: store.selectedDate, blockID: block.id) else { return }
-
-        editorSession = BlockEditorSession(
-            title: "Edit Block",
-            draft: .editing(detail: block, sourceBlock: sourceBlock),
-            cancelBlockID: block.id
-        )
-    }
-
-    private func beginOverlayCreation(for block: BlockDetailModel) {
-        editorSession = BlockEditorSession(
-            title: block.layerIndex.newNextTimelineLayerActionTitle,
-            draft: .overlay(parentBlockID: block.id, layerIndex: block.layerIndex + 1)
-        )
-    }
-}
-
-private struct TodayBlockDetailContent: View {
-    let block: BlockDetailModel
-    let onEdit: () -> Void
-    let onAddOverlay: () -> Void
-
-    private var style: LayerVisualStyle {
-        LayerVisualStyle.forBlock(layerIndex: block.layerIndex, isBlank: false)
-    }
-
-    private var badgeTitle: String {
-        block.layerIndex.timelineLayerBadgeTitle
-    }
-
-    private var addChildLayerTitle: String {
-        block.layerIndex.addNextTimelineLayerActionTitle
-    }
-
-    private var normalizedNote: String? {
-        // Treat empty note text the same as a missing note so the render logic stays simple.
-        let trimmed = block.note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                summaryCard
-                actionRow
-
-                if let normalizedNote {
-                    detailSection(title: "Note") {
-                        Text(normalizedNote)
-                            .font(.body)
-                            .foregroundStyle(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-
-                if !block.tasks.isEmpty {
-                    detailSection(title: "Tasks") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(block.tasks) { task in
-                                HStack(alignment: .top, spacing: 10) {
-                                    Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(task.isCompleted ? .secondary : style.accent)
-
-                                    Text(task.title)
-                                        .font(.body)
-                                        .foregroundStyle(task.isCompleted ? .secondary : .primary)
-                                        .strikethrough(task.isCompleted, color: .secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 28)
-        }
-        .background(Color(uiColor: .systemGroupedBackground))
-    }
-
-    private var summaryCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let parentTitle = block.parentBlockTitle {
-                        Label("Inside \(parentTitle)", systemImage: "arrow.turn.down.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(style.accent)
-                    }
-
-                    Text(block.title)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.primary)
-
-                    Text("\(block.startMinuteOfDay.formattedTime) - \(block.endMinuteOfDay.formattedTime)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer(minLength: 12)
-
-                Text(badgeTitle)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(style.badgeForeground)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(style.badgeBackground, in: Capsule())
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(style.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(style.border, lineWidth: 1)
-        )
-    }
-
-    @ViewBuilder
-    private var actionRow: some View {
-        HStack(spacing: 10) {
-            Button {
-                onEdit()
-            } label: {
-                Label("Edit", systemImage: "pencil")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-
-            Button {
-                onAddOverlay()
-            } label: {
-                Label(addChildLayerTitle, systemImage: "square.stack.badge.plus")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-
-    private func detailSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(.primary)
-
-            content()
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-    }
-}
-
 private struct BlockEditorSession: Identifiable {
     let id = UUID()
     let title: String
     let draft: BlockDraft
+    var scrollToSavedBlockOnSave = false
     var cancelBlockID: UUID? = nil
 }
 
@@ -1219,6 +1075,7 @@ private struct TodayBlockEditorPresenter: View {
     @Environment(ThingStructStore.self) private var store
 
     let session: BlockEditorSession
+    let onSaveSuccess: (UUID, Bool) -> Void
 
     var body: some View {
         // This adapter translates generic form output (`BlockDraft`) into concrete
@@ -1226,7 +1083,7 @@ private struct TodayBlockEditorPresenter: View {
         BlockEditorSheet(title: session.title, draft: session.draft) { draft in
             do {
                 let savedBlockID = try store.saveBlockDraft(draft, for: store.selectedDate)
-                store.selectBlock(savedBlockID)
+                onSaveSuccess(savedBlockID, session.scrollToSavedBlockOnSave)
                 return true
             } catch {
                 store.presentError(error)
@@ -1266,12 +1123,15 @@ private struct TodayBlockEditorPresenter: View {
         selectedBlockID: model.selectedBlock?.id,
         currentMinute: 9 * 60 + 30,
         jumpToCurrentTrigger: 0,
+        scrollToBlockID: nil,
+        scrollToBlockTrigger: 0,
         timingResolver: { _ in nil },
         resizeBounds: { _ in nil },
         onResizeBlockStart: { _, _ in },
         onResizeBlockEnd: { _, _ in },
         onCreateBaseInOpenSlot: { _, _ in },
-        onSelect: { _ in }
+        onSelect: { _ in },
+        onBeginEdit: { _ in }
     )
 }
 
@@ -1282,12 +1142,15 @@ private struct TodayBlockEditorPresenter: View {
         selectedBlockID: nil,
         currentMinute: nil,
         jumpToCurrentTrigger: 0,
+        scrollToBlockID: nil,
+        scrollToBlockTrigger: 0,
         timingResolver: { _ in nil },
         resizeBounds: { _ in nil },
         onResizeBlockStart: { _, _ in },
         onResizeBlockEnd: { _, _ in },
         onCreateBaseInOpenSlot: { _, _ in },
-        onSelect: { _ in }
+        onSelect: { _ in },
+        onBeginEdit: { _ in }
     )
 }
 
@@ -1305,20 +1168,14 @@ private struct TodayBlockEditorPresenter: View {
         selectedBlockID: model.selectedBlock?.id,
         currentMinute: nil,
         jumpToCurrentTrigger: 0,
+        scrollToBlockID: nil,
+        scrollToBlockTrigger: 0,
         timingResolver: { _ in nil },
         resizeBounds: { _ in nil },
         onResizeBlockStart: { _, _ in },
         onResizeBlockEnd: { _, _ in },
         onCreateBaseInOpenSlot: { _, _ in },
-        onSelect: { _ in }
+        onSelect: { _ in },
+        onBeginEdit: { _ in }
     )
-}
-
-#Preview("Today Detail Content") {
-    TodayBlockDetailContent(
-        block: PreviewSupport.selectedBlockDetailModel(),
-        onEdit: {},
-        onAddOverlay: {}
-    )
-    .padding()
 }

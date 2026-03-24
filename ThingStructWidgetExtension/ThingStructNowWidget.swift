@@ -212,7 +212,7 @@ private struct ThingStructNowWidgetEntryView: View {
                 smallBlockStack
             }
         }
-        .padding(12)
+        .padding(4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .containerBackground(for: .widget) {
             widgetBackground
@@ -241,7 +241,7 @@ private struct ThingStructNowWidgetEntryView: View {
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(16)
+        .padding(4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .containerBackground(for: .widget) {
             widgetBackground

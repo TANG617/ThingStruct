@@ -25,7 +25,7 @@ extension ThingStructStore {
             }
 
         case .templates:
-            selectedTab = .templates
+            openSettings(destination: .templates)
 
         case .startCurrentBlockLiveActivity:
             startCurrentBlockLiveActivity()
