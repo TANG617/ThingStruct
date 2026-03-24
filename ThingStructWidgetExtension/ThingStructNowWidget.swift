@@ -166,6 +166,9 @@ private struct ThingStructNowWidgetEntryView: View {
     private var accessoryInlineLayout: some View {
         Text(accessoryInlineText)
             .lineLimit(1)
+            .containerBackground(for: .widget) {
+                Color.clear
+            }
     }
 
     private var accessoryRectangularLayout: some View {
@@ -184,6 +187,9 @@ private struct ThingStructNowWidgetEntryView: View {
                 .foregroundStyle(currentStyle.accent)
                 .lineLimit(1)
         }
+        .containerBackground(for: .widget) {
+            Color.clear
+        }
     }
 
     private var accessoryCircularLayout: some View {
@@ -200,6 +206,9 @@ private struct ThingStructNowWidgetEntryView: View {
             }
             .foregroundStyle(currentStyle.accent)
         }
+        .containerBackground(for: .widget) {
+            Color.clear
+        }
     }
 
     private var smallLayout: some View {
@@ -212,7 +221,7 @@ private struct ThingStructNowWidgetEntryView: View {
                 smallBlockStack
             }
         }
-        .padding(4)
+        .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .containerBackground(for: .widget) {
             widgetBackground
@@ -241,7 +250,7 @@ private struct ThingStructNowWidgetEntryView: View {
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(4)
+        .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .containerBackground(for: .widget) {
             widgetBackground
