@@ -5,6 +5,10 @@ import WidgetKit
 
 @available(iOS 16.1, *)
 struct ThingStructCurrentBlockLiveActivity: Widget {
+    private var themeTint: Color {
+        AppTintPreset.current.tintColor
+    }
+
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: ThingStructCurrentBlockActivityAttributes.self) { context in
             ThingStructLiveActivityLockScreenView(context: context)
@@ -29,7 +33,7 @@ struct ThingStructCurrentBlockLiveActivity: Widget {
                 }
             } compactLeading: {
                 Image(systemName: context.state.remainingTaskCount == 0 ? "checkmark.circle.fill" : "bolt.fill")
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(themeTint)
             } compactTrailing: {
                 Text("\(context.state.remainingMinutes)m")
                     .font(.caption2.monospacedDigit())
@@ -43,7 +47,7 @@ struct ThingStructCurrentBlockLiveActivity: Widget {
                 }
             }
             .widgetURL(context.deepLinkURL)
-            .keylineTint(.orange)
+            .keylineTint(themeTint)
         }
     }
 }
@@ -51,6 +55,10 @@ struct ThingStructCurrentBlockLiveActivity: Widget {
 @available(iOS 16.1, *)
 private struct ThingStructLiveActivityLockScreenView: View {
     let context: ActivityViewContext<ThingStructCurrentBlockActivityAttributes>
+
+    private var themeTint: Color {
+        AppTintPreset.current.tintColor
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -63,7 +71,7 @@ private struct ThingStructLiveActivityLockScreenView: View {
 
                 Text("\(context.state.remainingMinutes)m")
                     .font(.subheadline.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(themeTint)
             }
 
             HStack(spacing: 10) {
@@ -142,12 +150,16 @@ private struct ThingStructLiveActivityDetailContent: View {
     let taskFont: Font
     let metaFont: Font
 
+    private var themeTint: Color {
+        AppTintPreset.current.tintColor
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let displaySourceBlockTitle = state.displaySourceBlockTitle {
                 Label("From \(displaySourceBlockTitle)", systemImage: "arrow.turn.down.right")
                     .font(metaFont.weight(.semibold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(themeTint)
                     .lineLimit(1)
             }
 
@@ -204,11 +216,11 @@ private struct ThingStructLiveActivityDetailContent: View {
             Button(intent: intent) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(themeTint)
                     .frame(width: 32, height: 32)
                     .background(
                         Circle()
-                            .fill(.tint.opacity(0.14))
+                            .fill(themeTint.opacity(0.14))
                     )
             }
             .buttonStyle(.plain)

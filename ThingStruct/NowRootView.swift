@@ -70,6 +70,8 @@ private struct NowNotesSectionView: View {
 }
 
 private struct NowTasksSectionView: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     let sections: [NowTaskSection]
     let statusMessage: String?
     let activeChain: [NowChainItem]
@@ -88,12 +90,13 @@ private struct NowTasksSectionView: View {
 
     private var emptyStyle: LayerVisualStyle {
         guard let currentItem else {
-            return LayerVisualStyle.forBlock(layerIndex: 0, isBlank: true)
+            return LayerVisualStyle.forBlock(layerIndex: 0, isBlank: true, preset: tintPreset)
         }
 
         return LayerVisualStyle.forBlock(
             layerIndex: currentItem.layerIndex,
-            isBlank: currentItem.isBlank
+            isBlank: currentItem.isBlank,
+            preset: tintPreset
         )
     }
 
@@ -143,10 +146,16 @@ private struct NowTasksSectionView: View {
 }
 
 private struct NowNoteCard: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     let section: NowNoteSection
 
     private var style: LayerVisualStyle {
-        LayerVisualStyle.forBlock(layerIndex: section.layerIndex, isBlank: section.isBlank)
+        LayerVisualStyle.forBlock(
+            layerIndex: section.layerIndex,
+            isBlank: section.isBlank,
+            preset: tintPreset
+        )
     }
 
     var body: some View {
@@ -178,11 +187,17 @@ private struct NowNoteCard: View {
 }
 
 private struct NowTaskCard: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     let section: NowTaskSection
     let onToggle: (UUID) -> Void
 
     private var style: LayerVisualStyle {
-        LayerVisualStyle.forBlock(layerIndex: section.layerIndex, isBlank: false)
+        LayerVisualStyle.forBlock(
+            layerIndex: section.layerIndex,
+            isBlank: false,
+            preset: tintPreset
+        )
     }
 
     private var incompleteTasks: [TaskItem] {

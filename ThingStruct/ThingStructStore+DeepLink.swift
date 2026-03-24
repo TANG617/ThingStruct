@@ -25,7 +25,7 @@ extension ThingStructStore {
             }
 
         case .templates:
-            openSettings(destination: .templates)
+            openLibrary(destination: .templates)
 
         case .startCurrentBlockLiveActivity:
             startCurrentBlockLiveActivity()

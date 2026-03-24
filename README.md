@@ -747,7 +747,7 @@
 
 1. `NowView`
 2. `TodayView`
-3. `TemplatesView`
+3. `LibraryView`
 
 每个 Tab 内部可以独立使用 `NavigationStack`。
 
@@ -755,7 +755,7 @@
 
 1. `Now`
 2. `Today`
-3. `Templates`
+3. `Library`
 
 推荐含义：
 
@@ -765,8 +765,8 @@
 - `TodayView`
   - 面向“今天整天的时间块结构与编辑”。
 
-- `TemplatesView`
-  - 面向“候选模板、正式模板、weekday 规则与明日 override”。
+- `LibraryView`
+  - 面向“规划资产入口”，其中包含 `TemplatesView` 和当天 block 的 YAML 导入导出。
 
 ### 11.3 UI 与核心层的边界
 

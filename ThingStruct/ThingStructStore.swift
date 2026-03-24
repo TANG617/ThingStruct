@@ -7,7 +7,7 @@ import WidgetKit
 enum RootTab: Hashable {
     case now
     case today
-    case settings
+    case library
 }
 
 // `ThingStructStore` is the app's UI-facing state container.
@@ -26,6 +26,7 @@ enum RootTab: Hashable {
 final class ThingStructStore {
     // The full persisted app state. Almost everything else is derived from this.
     var document: ThingStructDocument = .init()
+    var tintPreset: AppTintPreset
 
     // UI selection state that is global enough to outlive a single screen render.
     var selectedTab: RootTab = .now {
@@ -35,8 +36,8 @@ final class ThingStructStore {
             selectedBlockID = nil
         }
     }
-    // The Settings tab owns nested destinations such as Templates.
-    var settingsNavigationPath: [SettingsDestination] = []
+    // The Library tab owns nested destinations such as Templates and Import/Export.
+    var libraryNavigationPath: [LibraryDestination] = []
     var selectedDate: LocalDay = LocalDay.today()
     var selectedBlockID: UUID?
     var isLoaded = false
@@ -46,6 +47,7 @@ final class ThingStructStore {
     private let documentStore: ThingStructDocumentStore
 
     init(documentStore: ThingStructDocumentStore = .live) {
+        tintPreset = ThingStructTintPreference.load()
         self.documentStore = documentStore
     }
 
@@ -117,9 +119,18 @@ final class ThingStructStore {
         selectedBlockID = blockID
     }
 
-    func openSettings(destination: SettingsDestination? = nil) {
-        selectedTab = .settings
-        settingsNavigationPath = destination.map { [$0] } ?? []
+    func openLibrary(destination: LibraryDestination? = nil) {
+        selectedTab = .library
+        libraryNavigationPath = destination.map { [$0] } ?? []
+    }
+
+    func applyTintPreset(_ preset: AppTintPreset) {
+        guard tintPreset != preset else { return }
+
+        tintPreset = preset
+        ThingStructTintPreference.save(preset)
+        WidgetCenter.shared.reloadTimelines(ofKind: ThingStructSharedConfig.widgetKind)
+        syncCurrentBlockLiveActivity()
     }
 
     // Error routing is centralized so screens can stay focused on layout.
@@ -231,6 +242,30 @@ final class ThingStructStore {
     // the domain object stored in the selected day plan.
     func persistedBlock(on date: LocalDay, blockID: UUID) -> TimeBlock? {
         document.dayPlan(for: date)?.blocks.first(where: { $0.id == blockID })
+    }
+
+    func exportTodayBlocksYAML(today: LocalDay = .today()) throws -> String {
+        try ThingStructPortableDayBlocks.exportYAML(from: materializedDayPlan(on: today))
+    }
+
+    func previewTodayBlocksImport(_ yaml: String) throws -> PortableDayBlocksSummary {
+        try ThingStructPortableDayBlocks.summary(fromYAML: yaml)
+    }
+
+    func importTodayBlocksYAML(_ yaml: String, today: LocalDay = .today()) throws {
+        let existingPlan = try materializedDayPlan(on: today)
+        let importedPlan = try ThingStructPortableDayBlocks.dayPlanForImport(
+            fromYAML: yaml,
+            on: today,
+            dayPlanID: existingPlan.id,
+            lastGeneratedAt: existingPlan.lastGeneratedAt
+        )
+
+        if selectedDate == today {
+            selectedBlockID = nil
+        }
+
+        try commit(dayPlan: importedPlan)
     }
 
     // Commands below mutate the document. In a more classic MVC/MVVM vocabulary,

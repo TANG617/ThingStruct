@@ -29,12 +29,14 @@ struct AppShellView: View {
                 }
                 .tag(RootTab.today)
 
-            SettingsRootView()
+            LibraryRootView()
                 .tabItem {
-                    Label("Settings", systemImage: "gearshape")
+                    Label("Library", systemImage: "square.stack.3d.up")
                 }
-                .tag(RootTab.settings)
+                .tag(RootTab.library)
         }
+        .tint(store.tintPreset.tintColor)
+        .environment(\.thingStructTintPreset, store.tintPreset)
         // Global error presentation lives here so feature screens can report errors
         // without each screen reinventing its own alert state.
         .alert(
@@ -63,17 +65,17 @@ struct AppShellView: View {
         .environment(PreviewSupport.store(tab: .today))
 }
 
-#Preview("App Shell - Settings") {
+#Preview("App Shell - Library") {
     AppShellView()
-        .environment(PreviewSupport.store(tab: .settings))
+        .environment(PreviewSupport.store(tab: .library))
 }
 
-#Preview("App Shell - Templates in Settings") {
+#Preview("App Shell - Templates in Library") {
     AppShellView()
         .environment(
             PreviewSupport.store(
-                tab: .settings,
-                settingsNavigationPath: [.templates]
+                tab: .library,
+                libraryNavigationPath: [.templates]
             )
         )
 }

@@ -235,6 +235,8 @@ private struct SectionHeader: View {
 }
 
 private struct TemplateCard<Content: View>: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     var isEmphasized = false
     @ViewBuilder let content: Content
 
@@ -252,7 +254,7 @@ private struct TemplateCard<Content: View>: View {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .stroke(
                     isEmphasized
-                        ? Color.accentColor.opacity(0.28)
+                        ? tintPreset.tintColor.opacity(0.28)
                         : Color(uiColor: .separator).opacity(0.12),
                     lineWidth: isEmphasized ? 1.5 : 1
                 )
@@ -340,6 +342,8 @@ private struct SuggestedTemplateEmptyCard: View {
 }
 
 private struct SavedTemplateCard: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     let template: SavedTemplateSummary
     let isSelectedForTomorrow: Bool
     let onEdit: () -> Void
@@ -363,7 +367,7 @@ private struct SavedTemplateCard: View {
                 Spacer(minLength: 12)
 
                 if isSelectedForTomorrow {
-                    TemplateBadge(title: "Tomorrow", tint: .accentColor)
+                    TemplateBadge(title: "Tomorrow", tint: tintPreset.tintColor)
                 }
             }
 
@@ -530,6 +534,8 @@ private struct SaveTemplateSheet: View {
 }
 
 private struct TomorrowScheduleCard: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     let schedule: TomorrowScheduleSummary
     let onRegenerate: () -> Void
 
@@ -548,7 +554,7 @@ private struct TomorrowScheduleCard: View {
                 Spacer(minLength: 12)
 
                 if schedule.overrideTemplateTitle != nil {
-                    TemplateBadge(title: "Override Active", tint: .accentColor)
+                    TemplateBadge(title: "Override Active", tint: tintPreset.tintColor)
                 }
             }
 
@@ -668,6 +674,8 @@ private struct TemplatePreviewRow: View {
 }
 
 private struct TemplateChipRow: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     let titles: [String]
 
     var body: some View {
@@ -685,7 +693,7 @@ private struct TemplateChipRow: View {
     @ViewBuilder
     private var chips: some View {
         ForEach(titles, id: \.self) { title in
-            TemplateBadge(title: title, tint: .accentColor)
+            TemplateBadge(title: title, tint: tintPreset.tintColor)
         }
     }
 }
@@ -720,7 +728,7 @@ private struct TemplateBadge: View {
     NavigationStack {
         TemplatesRootView()
     }
-    .environment(PreviewSupport.store(tab: .settings))
+    .environment(PreviewSupport.store(tab: .library))
 }
 
 #Preview("Templates Root - Empty") {
@@ -729,7 +737,7 @@ private struct TemplateBadge: View {
     }
     .environment(
         PreviewSupport.store(
-            tab: .settings,
+            tab: .library,
             document: ThingStructDocument()
         )
     )
@@ -739,7 +747,7 @@ private struct TemplateBadge: View {
     NavigationStack {
         TemplatesRootView()
     }
-    .environment(PreviewSupport.store(tab: .settings, loaded: false))
+    .environment(PreviewSupport.store(tab: .library, loaded: false))
 }
 
 #Preview("Suggested Template Card") {

@@ -20,7 +20,8 @@ enum PreviewSupport {
 
     static func store(
         tab: RootTab = .now,
-        settingsNavigationPath: [SettingsDestination] = [],
+        libraryNavigationPath: [LibraryDestination] = [],
+        tintPreset: AppTintPreset = .ocean,
         selectedDate: LocalDay? = nil,
         loaded: Bool = true,
         document: ThingStructDocument? = nil,
@@ -37,7 +38,8 @@ enum PreviewSupport {
         )
         let store = ThingStructStore(documentStore: documentStore)
         store.selectedTab = tab
-        store.settingsNavigationPath = settingsNavigationPath
+        store.libraryNavigationPath = libraryNavigationPath
+        store.tintPreset = tintPreset
         store.selectedDate = day
 
         if loaded {

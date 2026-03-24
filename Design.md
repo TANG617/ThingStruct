@@ -77,7 +77,7 @@ UI 不自行计算以下结果：
 
 1. `Now`
 2. `Today`
-3. `Templates`
+3. `Library`
 
 每个 tab 内部都使用独立的 `NavigationStack`。
 
@@ -85,7 +85,7 @@ UI 不自行计算以下结果：
 
 - `Now` 默认使用大标题
 - `Today` 默认使用 inline 标题，以便把垂直空间留给时间轴
-- `Templates` 可根据内容密度选择大标题或 inline，但同一版本内应保持稳定
+- `Library` 可根据内容密度选择大标题或 inline，但同一版本内应保持稳定
 - tab 切换时保留各自导航栈状态
 - 默认启动进入 `Now`
 
@@ -93,13 +93,13 @@ UI 不自行计算以下结果：
 
 1. `Now`
 2. `Today`
-3. `Templates`
+3. `Library`
 
 推荐图标：
 
 - `Now`: `play.circle` 或 `bolt.circle`
 - `Today`: `calendar`
-- `Templates`: `square.stack.3d.up`
+- `Library`: `square.stack.3d.up`
 
 语义分工：
 
@@ -107,8 +107,12 @@ UI 不自行计算以下结果：
   - 回答“现在应该关注什么”
 - `Today`
   - 回答“今天整天的结构是什么，以及怎么编辑”
-- `Templates`
-  - 回答“模板是什么、明天将采用什么模板、如何调整规则”
+- `Library`
+  - 回答“规划资产在哪里，包括模板与 YAML 导入导出”
+
+补充说明：
+
+- `Templates` 继续存在，但现在作为 `Library` 内的一个子页面，而不再是一级 tab。
 
 ## 4. 页面级信息架构
 

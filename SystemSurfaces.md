@@ -42,8 +42,9 @@ ThingStruct 的核心价值是回答三个问题：
 
 结合现有工程，ThingStruct 已具备以下基础：
 
-- 主 App 已有三个一级入口：`Now`、`Today`、`Templates`。
-- 现有 deep link 已支持 `thingstruct://now`、`thingstruct://today`、`thingstruct://templates`。
+ - 主 App 已有三个一级入口：`Now`、`Today`、`Library`。
+ - `Templates` 仍然存在，但现在作为 `Library` 内的子页面。
+ - 现有 deep link 已支持 `thingstruct://now`、`thingstruct://today`、`thingstruct://templates`。
 - App 与 Widget Extension 已共享 App Group 容器。
 - 已经存在共享文档客户端 [ThingStructSharedDocumentClient.swift](/Users/timli/workspace/ThingStruct/ThingStruct/CoreShared/ThingStructSharedDocumentClient.swift)。
 - 已经存在 `Now` Widget 和一个内部交互 intent [ToggleTaskCompletionIntent.swift](/Users/timli/workspace/ThingStruct/ThingStructWidgetExtension/ToggleTaskCompletionIntent.swift)。

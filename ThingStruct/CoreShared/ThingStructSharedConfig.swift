@@ -2,6 +2,7 @@ import Foundation
 
 enum ThingStructSharedConfig {
     static let appGroupID = "group.tang.ThingStruct"
+    static let tintPresetDefaultsKey = "THINGSTRUCT_TINT_PRESET"
     static let widgetKind = "ThingStructNowWidget"
     static let currentBlockLiveActivityKind = "ThingStructCurrentBlockLiveActivity"
     static let openNowControlKind = "ThingStructOpenNowControl"

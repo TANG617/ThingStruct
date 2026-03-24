@@ -653,6 +653,8 @@ private func displayedEndMinute(
 }
 
 private struct TimelineBlockCard: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     let node: TodayTimelineNode
     let hourHeight: CGFloat
     let selectedBlockID: UUID?
@@ -680,7 +682,11 @@ private struct TimelineBlockCard: View {
     private var block: TimelineBlockItem { node.block }
 
     private var style: LayerVisualStyle {
-        LayerVisualStyle.forBlock(layerIndex: block.layerIndex, isBlank: false)
+        LayerVisualStyle.forBlock(
+            layerIndex: block.layerIndex,
+            isBlank: false,
+            preset: tintPreset
+        )
     }
 
     private var isSelected: Bool {

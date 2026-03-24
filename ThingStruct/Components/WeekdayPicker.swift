@@ -39,6 +39,8 @@ struct WeekdayPicker: View {
 }
 
 struct WeekdayButton: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     let day: Weekday
     let isSelected: Bool
     let isOccupied: Bool
@@ -78,7 +80,7 @@ struct WeekdayButton: View {
             return Color(uiColor: .tertiarySystemFill)
         }
         if isSelected {
-            return Color.accentColor
+            return tintPreset.tintColor
         }
         return Color(uiColor: .secondarySystemGroupedBackground)
     }

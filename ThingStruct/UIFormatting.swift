@@ -175,7 +175,7 @@ struct RootScreenContainer<Value, Content: View>: View {
 #Preview("Layer Palette") {
     VStack(alignment: .leading, spacing: 12) {
         ForEach(0 ... 4, id: \.self) { layer in
-            let style = LayerVisualStyle.forBlock(layerIndex: layer, isBlank: false)
+            let style = LayerVisualStyle.forBlock(layerIndex: layer, isBlank: false, preset: .ocean)
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(style.strongSurface)
@@ -206,7 +206,7 @@ struct RootScreenContainer<Value, Content: View>: View {
             .background(style.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
 
-        let blankStyle = LayerVisualStyle.forBlock(layerIndex: 0, isBlank: true)
+        let blankStyle = LayerVisualStyle.forBlock(layerIndex: 0, isBlank: true, preset: .ocean)
         Text("Blank blocks stay neutral.")
             .font(.subheadline)
             .foregroundStyle(blankStyle.accent)
