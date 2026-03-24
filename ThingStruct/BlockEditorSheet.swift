@@ -419,6 +419,7 @@ struct BlockEditorSheet: View {
     var onCancelBlock: (() -> Void)? = nil
 
     @State private var isShowingCancelConfirmation = false
+    @FocusState private var focusedTaskID: UUID?
 
     var body: some View {
         NavigationStack {
@@ -428,6 +429,42 @@ struct BlockEditorSheet: View {
                     TextField("Title", text: $draft.title)
                     TextField("Note", text: $draft.note, axis: .vertical)
                         .lineLimit(2 ... 4)
+                }
+                
+                Section("Tasks") {
+                    if draft.tasks.isEmpty {
+                        Text("No tasks")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach($draft.tasks, editActions: [.move, .delete]) { $task in
+                        let taskID = $task.wrappedValue.id
+
+                        HStack(spacing: 12) {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+
+                            // Each field binds directly into the matching task draft row.
+                            TextField("Task", text: $task.title)
+                                .focused($focusedTaskID, equals: taskID)
+                        }
+                    }
+                    HStack(spacing: 12) {
+                        Image(systemName: "plus")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(.tertiary)
+
+                        Text("Tap to add task")
+                            .foregroundStyle(.tertiary)
+
+                        Spacer(minLength: 0)
+                    }
+                    .frame(minHeight: 36)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        beginAddingTask()
+                    }
                 }
 
                 Section("Timing") {
@@ -503,27 +540,7 @@ struct BlockEditorSheet: View {
                     }
                 }
 
-                Section("Tasks") {
-                    if draft.tasks.isEmpty {
-                        Text("No tasks")
-                            .foregroundStyle(.secondary)
-                    }
 
-                    ForEach($draft.tasks) { $task in
-                        // Iterating over bindings gives each row direct write-back access
-                        // into the parent array element.
-                        TextField("Task", text: $task.title)
-                    }
-                    .onDelete { offsets in
-                        draft.tasks.remove(atOffsets: offsets)
-                    }
-
-                    Button {
-                        draft.tasks.append(TaskItem(title: "", order: draft.tasks.count))
-                    } label: {
-                        Label("Add Task", systemImage: "plus")
-                    }
-                }
 
                 if onCancelBlock != nil {
                     Section {
@@ -550,6 +567,13 @@ struct BlockEditorSheet: View {
                     draft.clampRelativeEndIfNeeded()
                 }
             }
+            .onChange(of: focusedTaskID) { previousTaskID, currentTaskID in
+                guard previousTaskID != currentTaskID else { return }
+                removeTaskIfBlank(previousTaskID)
+            }
+            .onChange(of: draft.tasks.map(\.id)) { _, _ in
+                normalizeTaskOrder()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -559,6 +583,7 @@ struct BlockEditorSheet: View {
 
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        commitTaskEdits()
                         if onSave(draft) {
                             dismiss()
                         }
@@ -609,6 +634,45 @@ struct BlockEditorSheet: View {
             draft.absoluteEndMinuteOfDay.snapped(toStep: 5, within: absoluteEndValidRange),
             absoluteEndValidRange.lowerBound
         )
+    }
+
+    private func beginAddingTask() {
+        if let existingBlankTaskID = draft.tasks.first(where: isTaskBlank)?.id {
+            focusedTaskID = existingBlankTaskID
+            return
+        }
+
+        let newTask = TaskItem(title: "", order: draft.tasks.count)
+        draft.tasks.append(newTask)
+        focusedTaskID = newTask.id
+    }
+
+    private func removeTaskIfBlank(_ taskID: UUID?) {
+        guard
+            let taskID,
+            let index = draft.tasks.firstIndex(where: { $0.id == taskID }),
+            isTaskBlank(draft.tasks[index])
+        else {
+            return
+        }
+
+        draft.tasks.remove(at: index)
+    }
+
+    private func commitTaskEdits() {
+        focusedTaskID = nil
+        draft.tasks.removeAll(where: isTaskBlank)
+        normalizeTaskOrder()
+    }
+
+    private func normalizeTaskOrder() {
+        for index in draft.tasks.indices {
+            draft.tasks[index].order = index
+        }
+    }
+
+    private func isTaskBlank(_ task: TaskItem) -> Bool {
+        task.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
