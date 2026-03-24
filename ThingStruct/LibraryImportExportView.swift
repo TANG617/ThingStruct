@@ -4,12 +4,6 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 
-extension UTType {
-    static var thingStructPortableYAML: UTType {
-        UTType(exportedAs: "tang.ThingStruct.portable-yaml", conformingTo: .plainText)
-    }
-}
-
 struct LibraryImportExportView: View {
     @Environment(ThingStructStore.self) private var store
 
@@ -50,7 +44,7 @@ struct LibraryImportExportView: View {
         }
         .fileImporter(
             isPresented: $isShowingImporter,
-            allowedContentTypes: [.thingStructPortableYAML, .plainText]
+            allowedContentTypes: [.yaml, .plainText]
         ) { result in
             handleImportSelection(result)
         }
