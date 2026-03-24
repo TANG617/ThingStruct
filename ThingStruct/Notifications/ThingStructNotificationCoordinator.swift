@@ -277,15 +277,15 @@ final class ThingStructNotificationCoordinator: NSObject {
             return
         }
 
-        let client = ThingStructSharedDocumentClient.appLive
-        _ = try? client.completeTopTask(on: date, in: blockID)
+        let repository = ThingStructDocumentRepository.appLive
+        _ = try? repository.completeTopTask(on: date, in: blockID)
         WidgetCenter.shared.reloadTimelines(ofKind: ThingStructSharedConfig.widgetKind)
 
         if #available(iOS 16.1, *) {
             _ = try? await ThingStructCurrentBlockLiveActivityController.sync(using: .appLive, at: .now)
         }
 
-        if let document = try? client.load() {
+        if let document = try? repository.load() {
             sync(with: document)
         }
     }

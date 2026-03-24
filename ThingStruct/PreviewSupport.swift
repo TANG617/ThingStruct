@@ -31,12 +31,12 @@ enum PreviewSupport {
         let day = selectedDate ?? referenceDay
         // Each preview gets its own temporary file URL so previews do not interfere
         // with one another or with the real app document.
-        let documentStore = ThingStructDocumentStore(
+        let documentRepository = ThingStructDocumentRepository(
             fileURL: FileManager.default.temporaryDirectory
                 .appending(path: "ThingStructPreview")
                 .appending(path: "\(UUID().uuidString).json")
         )
-        let store = ThingStructStore(documentStore: documentStore)
+        let store = ThingStructStore(documentRepository: documentRepository)
         store.selectedTab = tab
         store.libraryNavigationPath = libraryNavigationPath
         store.tintPreset = tintPreset

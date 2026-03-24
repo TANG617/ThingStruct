@@ -81,14 +81,14 @@ struct ThingStructSystemLiveActivitySnapshot: Equatable, Sendable {
 }
 
 struct ThingStructSystemActionExecutor {
-    let client: ThingStructSharedDocumentClient
+    let repository: ThingStructDocumentRepository
 
-    init(client: ThingStructSharedDocumentClient = .appLive) {
-        self.client = client
+    init(repository: ThingStructDocumentRepository = .appLive) {
+        self.repository = repository
     }
 
     func currentSnapshot(at date: Date = .now) throws -> ThingStructSystemNowSnapshot {
-        try client.systemNowSnapshot(at: date)
+        try repository.systemNowSnapshot(at: date)
     }
 
     func openURL(for route: ThingStructSystemRoute) -> URL? {
@@ -99,7 +99,7 @@ struct ThingStructSystemActionExecutor {
         at date: Date = .now,
         source: ThingStructSystemSource? = nil
     ) throws -> URL? {
-        guard let block = try client.currentBlockReference(at: date) else {
+        guard let block = try repository.currentBlockReference(at: date) else {
             return nil
         }
 
@@ -113,13 +113,111 @@ struct ThingStructSystemActionExecutor {
 
     @discardableResult
     func completeCurrentTask(at date: Date = .now) throws -> ThingStructSystemTaskReference? {
-        try client.completeTopTask(at: date)
+        try repository.completeTopTask(at: date)
     }
 }
 
-extension ThingStructSharedDocumentClient {
+extension ThingStructDocumentRepository {
+    @discardableResult
+    func toggleTask(
+        on date: LocalDay,
+        blockID: UUID,
+        taskID: UUID,
+        completedAt: Date = .now
+    ) throws -> Bool {
+        guard try load() != nil else {
+            return false
+        }
+
+        let outcome = try mutate { document in
+            let prepared = try materializedDocument(
+                from: document,
+                for: date,
+                generatedAt: completedAt
+            )
+            document = prepared.document
+
+            guard let planIndex = document.dayPlans.firstIndex(where: { $0.date == date }) else {
+                return false
+            }
+            guard let blockIndex = document.dayPlans[planIndex].blocks.firstIndex(where: { $0.id == blockID }) else {
+                return false
+            }
+            guard let taskIndex = document.dayPlans[planIndex].blocks[blockIndex].tasks.firstIndex(where: { $0.id == taskID }) else {
+                return false
+            }
+
+            document.dayPlans[planIndex].blocks[blockIndex].tasks[taskIndex].isCompleted.toggle()
+            document.dayPlans[planIndex].blocks[blockIndex].tasks[taskIndex].completedAt =
+                document.dayPlans[planIndex].blocks[blockIndex].tasks[taskIndex].isCompleted ? completedAt : nil
+            document.dayPlans[planIndex].hasUserEdits = true
+            return true
+        }
+
+        return outcome.value
+    }
+
+    @discardableResult
+    func completeTask(
+        on date: LocalDay,
+        blockID: UUID,
+        taskID: UUID,
+        completedAt: Date = .now
+    ) throws -> Bool {
+        guard try load() != nil else {
+            return false
+        }
+
+        let outcome = try mutate { document in
+            try completeTask(
+                on: date,
+                blockID: blockID,
+                taskID: taskID,
+                completedAt: completedAt,
+                in: &document
+            )
+        }
+
+        return outcome.value
+    }
+
+    @discardableResult
+    func completeTask(
+        on date: LocalDay,
+        blockID: UUID,
+        taskID: UUID,
+        completedAt: Date = .now,
+        in document: inout ThingStructDocument
+    ) throws -> Bool {
+        let prepared = try materializedDocument(
+            from: document,
+            for: date,
+            generatedAt: completedAt
+        )
+        document = prepared.document
+
+        guard let planIndex = document.dayPlans.firstIndex(where: { $0.date == date }) else {
+            return false
+        }
+        guard let blockIndex = document.dayPlans[planIndex].blocks.firstIndex(where: { $0.id == blockID }) else {
+            return false
+        }
+        guard let taskIndex = document.dayPlans[planIndex].blocks[blockIndex].tasks.firstIndex(where: { $0.id == taskID }) else {
+            return false
+        }
+
+        guard !document.dayPlans[planIndex].blocks[blockIndex].tasks[taskIndex].isCompleted else {
+            return false
+        }
+
+        document.dayPlans[planIndex].blocks[blockIndex].tasks[taskIndex].isCompleted = true
+        document.dayPlans[planIndex].blocks[blockIndex].tasks[taskIndex].completedAt = completedAt
+        document.dayPlans[planIndex].hasUserEdits = true
+        return true
+    }
+
     func systemNowSnapshot(at date: Date) throws -> ThingStructSystemNowSnapshot {
-        let now = try nowScreenModel(at: date)
+        let now = try preparedNowScreenModel(at: date)
         return systemNowSnapshot(from: now)
     }
 
@@ -141,7 +239,7 @@ extension ThingStructSharedDocumentClient {
     }
 
     func liveActivitySnapshot(at date: Date) throws -> ThingStructSystemLiveActivitySnapshot {
-        let now = try nowScreenModel(at: date)
+        let now = try preparedNowScreenModel(at: date)
         return liveActivitySnapshot(from: now)
     }
 
@@ -218,7 +316,7 @@ extension ThingStructSharedDocumentClient {
         in blockID: UUID
     ) throws -> ThingStructSystemTaskReference? {
         let generatedAt = date.date() ?? .now
-        let document = try documentPreparedForNow(at: generatedAt)
+        let document = try preparedDocument(at: generatedAt)
 
         guard
             let block = document.dayPlan(for: date)?.blocks.first(where: { $0.id == blockID }),
@@ -260,6 +358,69 @@ extension ThingStructSharedDocumentClient {
         )
 
         return changed ? task : nil
+    }
+
+    func preparedNowScreenModel(at date: Date) throws -> NowScreenModel {
+        let localDay = LocalDay(date: date)
+        let document = try preparedDocument(at: date)
+        return try ThingStructPresentation.nowScreenModel(
+            document: document,
+            date: localDay,
+            minuteOfDay: date.minuteOfDay
+        )
+    }
+
+    func preparedDocument(at date: Date) throws -> ThingStructDocument {
+        let localDay = LocalDay(date: date)
+
+        guard try load() != nil else {
+            return try materializedDocument(
+                from: ThingStructDocument(),
+                for: localDay,
+                generatedAt: date
+            ).document
+        }
+
+        let outcome = try mutate { document in
+            let prepared = try materializedDocument(
+                from: document,
+                for: localDay,
+                generatedAt: date
+            )
+            document = prepared.document
+            return prepared.didMaterialize
+        }
+
+        return outcome.document
+    }
+
+    private func materializedDocument(
+        from document: ThingStructDocument,
+        for date: LocalDay,
+        generatedAt: Date
+    ) throws -> (document: ThingStructDocument, didMaterialize: Bool) {
+        guard document.dayPlan(for: date) == nil else {
+            return (document, false)
+        }
+
+        let dayPlan = try TemplateEngine.ensureMaterializedDayPlan(
+            for: date,
+            existingDayPlans: document.dayPlans,
+            savedTemplates: document.savedTemplates,
+            weekdayRules: document.weekdayRules,
+            overrides: document.overrides,
+            generatedAt: generatedAt
+        )
+
+        var updated = document
+        if let existingIndex = updated.dayPlans.firstIndex(where: { $0.date == dayPlan.date }) {
+            updated.dayPlans[existingIndex] = dayPlan
+        } else {
+            updated.dayPlans.append(dayPlan)
+            updated.dayPlans.sort { $0.date < $1.date }
+        }
+
+        return (updated, true)
     }
 
     private func prioritizedTaskReference(

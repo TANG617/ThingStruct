@@ -220,3 +220,16 @@ enum ThingStructWidgetSnapshotBuilder {
         return hour * 60 + minute
     }
 }
+
+extension ThingStructDocumentRepository {
+    func widgetSnapshot(
+        at date: Date,
+        maxTaskCount: Int
+    ) throws -> ThingStructWidgetSnapshot {
+        let now = try preparedNowScreenModel(at: date)
+        return ThingStructWidgetSnapshotBuilder.makeSnapshot(
+            from: now,
+            maxTaskCount: maxTaskCount
+        )
+    }
+}

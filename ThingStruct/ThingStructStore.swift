@@ -2,70 +2,53 @@ import Foundation
 import Observation
 import WidgetKit
 
-// `RootTab` is a small domain enum for the shell navigation state.
-// Keeping it typed is safer than passing raw strings or integers around.
 enum RootTab: Hashable {
     case now
     case today
     case library
 }
 
-// `ThingStructStore` is the app's UI-facing state container.
-//
-// A helpful mental model for a C++ developer:
-// - `ThingStructDocument` is the durable domain data.
-// - `ThingStructStore` is the controller/view-model that owns the document,
-//   exposes screen-specific queries, and executes user commands.
-// - SwiftUI views stay deliberately thin and call into this store.
-//
-// `@MainActor` means all accesses happen on the main UI thread.
-// `@Observable` lets SwiftUI automatically track field reads and refresh views
-// when those fields change.
 @MainActor
 @Observable
 final class ThingStructStore {
-    // The full persisted app state. Almost everything else is derived from this.
+    // MARK: State
+
     var document: ThingStructDocument = .init()
     var tintPreset: AppTintPreset
 
-    // UI selection state that is global enough to outlive a single screen render.
     var selectedTab: RootTab = .now {
         didSet {
-            // Switching tabs invalidates any selected block detail sheet.
             guard oldValue != selectedTab else { return }
             selectedBlockID = nil
         }
     }
-    // The Library tab owns nested destinations such as Templates and Import/Export.
     var libraryNavigationPath: [LibraryDestination] = []
     var selectedDate: LocalDay = LocalDay.today()
     var selectedBlockID: UUID?
     var isLoaded = false
     private(set) var lastErrorMessage: String?
 
-    // Small persistence dependency. This keeps file I/O out of the store's core logic.
-    private let documentStore: ThingStructDocumentStore
+    private let documentRepository: ThingStructDocumentRepository
 
-    init(documentStore: ThingStructDocumentStore = .live) {
+    init(documentRepository: ThingStructDocumentRepository = .appLive) {
         tintPreset = ThingStructTintPreference.load()
-        self.documentStore = documentStore
+        self.documentRepository = documentRepository
     }
 
+    // MARK: Bootstrap
+
     func loadIfNeeded() {
-        // SwiftUI may rebuild views many times; we only want to bootstrap once.
         guard !isLoaded else { return }
         bootstrapDocument()
     }
 
-    // Loads the document from disk or creates a seeded one on first launch.
-    // The older legacy migration path has been removed, so the startup path is now simple.
     func bootstrapDocument() {
         do {
-            if let loaded = try documentStore.load() {
+            if let loaded = try documentRepository.load() {
                 document = loaded
             } else {
                 document = try SampleDataFactory.seededDocument(referenceDay: .today())
-                try documentStore.save(document)
+                try documentRepository.save(document)
             }
 
             isLoaded = true
@@ -82,8 +65,8 @@ final class ThingStructStore {
         bootstrapDocument()
     }
 
-    // "Materializing" means ensuring a concrete `DayPlan` exists for a date,
-    // either because it was already stored or because it can be generated from templates.
+    // MARK: Navigation
+
     func ensureMaterialized(for date: LocalDay) {
         do {
             let materialized = try TemplateEngine.ensureMaterializedDayPlan(
@@ -103,8 +86,6 @@ final class ThingStructStore {
         }
     }
 
-    // Date selection is a UI-level concern, but it has a domain side effect:
-    // we guarantee the selected date has a day plan before the screen reads it.
     func selectDate(_ date: LocalDay) {
         selectedDate = date
         selectedBlockID = nil
@@ -124,16 +105,35 @@ final class ThingStructStore {
         libraryNavigationPath = destination.map { [$0] } ?? []
     }
 
+    func showNow() {
+        selectedTab = .now
+        selectedBlockID = nil
+    }
+
+    func showToday(date: LocalDay? = nil, blockID: UUID? = nil) {
+        selectedTab = .today
+
+        if let date {
+            selectDate(date)
+        } else {
+            selectedBlockID = nil
+        }
+
+        selectBlock(blockID)
+    }
+
+    func showTemplates() {
+        openLibrary(destination: .templates)
+    }
+
     func applyTintPreset(_ preset: AppTintPreset) {
         guard tintPreset != preset else { return }
 
         tintPreset = preset
         ThingStructTintPreference.save(preset)
-        WidgetCenter.shared.reloadTimelines(ofKind: ThingStructSharedConfig.widgetKind)
-        syncCurrentBlockLiveActivity()
+        refreshVisualSystemSurfaces()
     }
 
-    // Error routing is centralized so screens can stay focused on layout.
     func presentError(_ error: Error) {
         lastErrorMessage = error.localizedDescription
     }
@@ -146,18 +146,17 @@ final class ThingStructStore {
         lastErrorMessage = nil
     }
 
+    // MARK: Queries
+
     func minuteOfDay(for date: Date) -> Int {
         date.minuteOfDay
     }
 
-    // Many screens care about "now", but only when the selected date is actually today.
     func currentMinuteOnSelectedDate(currentDate: Date = .now) -> Int? {
         guard selectedDate == LocalDay(date: currentDate) else { return nil }
         return currentDate.minuteOfDay
     }
 
-    // Query helpers below convert the durable document into screen-specific models.
-    // This keeps transformation logic out of SwiftUI view code.
     func nowScreenModel(at date: Date) throws -> NowScreenModel {
         let localDay = LocalDay(date: date)
         ensureMaterialized(for: localDay)
@@ -201,8 +200,6 @@ final class ThingStructStore {
         )
     }
 
-    // `selectedBlockDetail` is intentionally derived instead of cached.
-    // The source of truth remains `document + selectedDate + selectedBlockID`.
     var selectedBlockDetail: BlockDetailModel? {
         guard isLoaded, let selectedBlockID else {
             return nil
@@ -241,8 +238,6 @@ final class ThingStructStore {
         overrideTemplateID(for: LocalDay.today().adding(days: 1))
     }
 
-    // This is a raw persisted-block lookup. Unlike presentation models, it returns
-    // the domain object stored in the selected day plan.
     func persistedBlock(on date: LocalDay, blockID: UUID) -> TimeBlock? {
         document.dayPlan(for: date)?.blocks.first(where: { $0.id == blockID })
     }
@@ -271,8 +266,8 @@ final class ThingStructStore {
         try commit(dayPlan: importedPlan)
     }
 
-    // Commands below mutate the document. In a more classic MVC/MVVM vocabulary,
-    // these are the store's "write-side" API.
+    // MARK: Commands
+
     func toggleTask(on date: LocalDay, blockID: UUID, taskID: UUID) {
         mutateDayPlan(for: date) { plan in
             guard let blockIndex = plan.blocks.firstIndex(where: { $0.id == blockID }) else { return }
@@ -324,11 +319,6 @@ final class ThingStructStore {
             throw ThingStructCoreError.missingDayPlanForDate(date)
         }
 
-        // Store commands often follow this pattern:
-        // 1. load the source-of-truth value
-        // 2. mutate a local copy
-        // 3. validate/resolve it through an engine
-        // 4. persist the whole updated document
         let savedBlockID: UUID
 
         switch draft.mode {
@@ -345,8 +335,6 @@ final class ThingStructStore {
             plan.blocks.append(block)
 
         case let .edit(blockID):
-            // Editing preserves structural identity (`id`, parent, layer) and only replaces
-            // the editable content/timing payload built from the draft.
             guard let blockIndex = plan.blocks.firstIndex(where: { $0.id == blockID }) else {
                 throw ThingStructCoreError.missingBlock(blockID)
             }
@@ -374,7 +362,6 @@ final class ThingStructStore {
 
     func cancelBlock(on date: LocalDay, blockID: UUID) {
         do {
-            // Cancellation is a structural engine operation, not just a boolean flag flip.
             var collapsed = try DayPlanEngine.cancelBlock(blockID, in: materializedDayPlan(on: date))
             collapsed.hasUserEdits = true
             if selectedBlockID == blockID {
@@ -397,8 +384,6 @@ final class ThingStructStore {
 
     func resizeBlockEnd(on date: LocalDay, blockID: UUID, proposedEndMinuteOfDay: Int) {
         do {
-            // The store delegates all legality checks to `DayPlanEngine`; the view only
-            // sends the user's proposed minute.
             var resized = try DayPlanEngine.resizeBlockEnd(
                 blockID,
                 in: materializedDayPlan(on: date),
@@ -550,7 +535,6 @@ final class ThingStructStore {
         }
     }
 
-    // Shared mutation helper for "read day plan -> change it -> mark user edits -> persist".
     private func mutateDayPlan(for date: LocalDay, mutation: (inout DayPlan) -> Void) {
         do {
             var plan = try materializedDayPlan(on: date)
@@ -564,8 +548,6 @@ final class ThingStructStore {
     }
 
     private func materializedDayPlan(on date: LocalDay) throws -> DayPlan {
-        // This helper turns the soft precondition "that day plan should exist"
-        // into a hard precondition "throw if it still does not".
         ensureMaterialized(for: date)
         guard let plan = document.dayPlan(for: date) else {
             throw ThingStructCoreError.missingDayPlanForDate(date)
@@ -574,13 +556,11 @@ final class ThingStructStore {
     }
 
     private func commit(dayPlan: DayPlan) throws {
-        // Centralizing commit keeps "replace in document + persist to disk" consistent.
         upsert(dayPlan: dayPlan)
         try persistDocument()
     }
 
     private func upsert(dayPlan: DayPlan) {
-        // `upsert` means "update if present, insert otherwise".
         if let index = document.dayPlans.firstIndex(where: { $0.date == dayPlan.date }) {
             document.dayPlans[index] = dayPlan
         } else {
@@ -590,12 +570,20 @@ final class ThingStructStore {
     }
 
     private func persistDocument() throws {
-        // The store itself never writes files directly; persistence is delegated so it can
-        // be swapped for previews/tests.
-        try documentStore.save(document)
+        try documentRepository.save(document)
+        documentDidChange()
+    }
+
+    // MARK: Persistence & System Sync
+
+    private func documentDidChange() {
+        refreshVisualSystemSurfaces()
+        syncNotifications()
+    }
+
+    private func refreshVisualSystemSurfaces() {
         WidgetCenter.shared.reloadTimelines(ofKind: ThingStructSharedConfig.widgetKind)
         syncCurrentBlockLiveActivity()
-        syncNotifications()
     }
 
     private func syncNotifications() {

@@ -25,14 +25,14 @@ struct ThingStructCurrentBlockActivityAttributes: ActivityAttributes {
 @available(iOS 16.1, *)
 enum ThingStructCurrentBlockLiveActivityController {
     static func start(
-        using client: ThingStructSharedDocumentClient = .appLive,
+        using repository: ThingStructDocumentRepository = .appLive,
         at date: Date = .now
     ) async throws -> Bool {
-        try await sync(using: client, at: date)
+        try await sync(using: repository, at: date)
     }
 
     static func sync(
-        using client: ThingStructSharedDocumentClient = .appLive,
+        using repository: ThingStructDocumentRepository = .appLive,
         at date: Date = .now
     ) async throws -> Bool {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
@@ -40,7 +40,7 @@ enum ThingStructCurrentBlockLiveActivityController {
             return false
         }
 
-        let snapshot = try client.liveActivitySnapshot(at: date)
+        let snapshot = try repository.liveActivitySnapshot(at: date)
         guard let payload = payload(from: snapshot, referenceDate: date) else {
             await endAll()
             return false

@@ -8,7 +8,7 @@ struct ThingStructNowWidgetEntry: TimelineEntry {
 }
 
 struct ThingStructNowWidgetProvider: TimelineProvider {
-    private let client = ThingStructSharedDocumentClient.widgetLive
+    private let repository = ThingStructDocumentRepository.widgetLive
 
     func placeholder(in context: Context) -> ThingStructNowWidgetEntry {
         ThingStructNowWidgetEntry(
@@ -56,7 +56,7 @@ struct ThingStructNowWidgetProvider: TimelineProvider {
         do {
             return ThingStructNowWidgetEntry(
                 date: date,
-                snapshot: try client.widgetSnapshot(
+                snapshot: try repository.widgetSnapshot(
                     at: date,
                     maxTaskCount: 3
                 )

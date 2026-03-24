@@ -2,6 +2,52 @@ import XCTest
 @testable import ThingStructCore
 
 final class SystemSupportTests: XCTestCase {
+    func testSystemRouteRoundTripsTodayURL() throws {
+        let route = ThingStructSystemRoute.today(
+            date: LocalDay(year: 2026, month: 3, day: 25),
+            blockID: UUID(uuidString: "11111111-1111-1111-1111-111111111111"),
+            taskID: UUID(uuidString: "22222222-2222-2222-2222-222222222222"),
+            source: .widget
+        )
+
+        XCTAssertEqual(
+            ThingStructSystemRoute(url: try XCTUnwrap(route.url)),
+            route
+        )
+    }
+
+    func testDocumentRepositoryLoadsSavesAndMutatesUsingFileURL() throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appending(path: "ThingStructTests")
+            .appending(path: "\(UUID().uuidString).json")
+        let repository = ThingStructDocumentRepository(fileURL: fileURL)
+        let template = SavedDayTemplate(
+            title: "Weekday",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: []
+        )
+        let document = ThingStructDocument(savedTemplates: [template])
+
+        XCTAssertNil(try repository.load())
+
+        try repository.save(document)
+        XCTAssertEqual(try repository.load(), document)
+
+        let outcome = try repository.mutate { updated in
+            updated.overrides.append(
+                DateTemplateOverride(
+                    date: LocalDay(year: 2026, month: 3, day: 26),
+                    savedTemplateID: template.id
+                )
+            )
+            return updated.overrides.count
+        }
+
+        XCTAssertTrue(outcome.changed)
+        XCTAssertEqual(outcome.value, 1)
+        XCTAssertEqual(try repository.load()?.overrides.count, 1)
+    }
+
     func testLiveActivitySnapshotUsesTopLayerNoteAndTaskWhenTopLayerHasIncompleteTask() throws {
         let day = LocalDay(year: 2026, month: 3, day: 22)
         let baseID = UUID()
@@ -189,27 +235,27 @@ final class SystemSupportTests: XCTestCase {
         )
         overlay.note = "Top note"
 
-        let client = ThingStructSharedDocumentClient()
+        let repository = ThingStructDocumentRepository()
         var document = ThingStructDocument(dayPlans: [try DayPlanEngine.resolved(makePlan(date: day, blocks: [base, overlay]))])
         let referenceDate = try date(day, minuteOfDay: 600)
 
         let firstSnapshot = try makeLiveActivitySnapshot(document: document, day: day, minuteOfDay: 600)
         XCTAssertEqual(firstSnapshot.displayTask?.taskID, overlayTaskAID)
 
-        XCTAssertTrue(try client.completeTask(on: day, blockID: overlayID, taskID: overlayTaskAID, completedAt: referenceDate, in: &document))
+        XCTAssertTrue(try repository.completeTask(on: day, blockID: overlayID, taskID: overlayTaskAID, completedAt: referenceDate, in: &document))
 
         let secondSnapshot = try makeLiveActivitySnapshot(document: document, day: day, minuteOfDay: 600)
         XCTAssertEqual(secondSnapshot.displayTask?.taskID, overlayTaskBID)
         XCTAssertEqual(secondSnapshot.displayBlock?.blockID, overlayID)
 
-        XCTAssertTrue(try client.completeTask(on: day, blockID: overlayID, taskID: overlayTaskBID, completedAt: referenceDate, in: &document))
+        XCTAssertTrue(try repository.completeTask(on: day, blockID: overlayID, taskID: overlayTaskBID, completedAt: referenceDate, in: &document))
 
         let thirdSnapshot = try makeLiveActivitySnapshot(document: document, day: day, minuteOfDay: 600)
         XCTAssertEqual(thirdSnapshot.displayTask?.taskID, baseTaskID)
         XCTAssertEqual(thirdSnapshot.displayBlock?.blockID, baseID)
         XCTAssertEqual(thirdSnapshot.displayNote, "Base note")
 
-        XCTAssertFalse(try client.completeTask(on: day, blockID: overlayID, taskID: overlayTaskBID, completedAt: referenceDate, in: &document))
+        XCTAssertFalse(try repository.completeTask(on: day, blockID: overlayID, taskID: overlayTaskBID, completedAt: referenceDate, in: &document))
 
         let persistedOverlay = try XCTUnwrap(
             document.dayPlan(for: day)?.blocks.first(where: { $0.id == overlayID })
@@ -224,13 +270,13 @@ final class SystemSupportTests: XCTestCase {
         day: LocalDay,
         minuteOfDay: Int
     ) throws -> ThingStructSystemLiveActivitySnapshot {
-        let client = ThingStructSharedDocumentClient()
+        let repository = ThingStructDocumentRepository()
         let now = try ThingStructPresentation.nowScreenModel(
             document: document,
             date: day,
             minuteOfDay: minuteOfDay
         )
-        return client.liveActivitySnapshot(from: now)
+        return repository.liveActivitySnapshot(from: now)
     }
 
     private func date(_ day: LocalDay, minuteOfDay: Int) throws -> Date {
