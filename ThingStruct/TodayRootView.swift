@@ -748,6 +748,10 @@ private struct TimelineBlockCard: View {
             .frame(height: headerBackdropHeight)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectBlock()
+        }
     }
 
     var body: some View {
@@ -761,6 +765,10 @@ private struct TimelineBlockCard: View {
                     // by embedding more `TimelineBlockCard` views inside itself.
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .fill(backgroundColor)
+                        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .onTapGesture {
+                            selectBlock()
+                        }
 
                     ForEach(Array(node.children), id: \.id) { child in
                         childCard(
@@ -792,13 +800,6 @@ private struct TimelineBlockCard: View {
                     color: (isSelected || isResizing) ? style.accent.opacity(0.18) : .clear,
                     radius: 10,
                     y: 4
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .gesture(
-                    TapGesture().onEnded {
-                        onSelect(block.id)
-                    },
-                    including: .gesture
                 )
             }
         }
@@ -928,6 +929,12 @@ private struct TimelineBlockCard: View {
                 resizePreview: resizePreview
             )
         )
+    }
+
+    private func selectBlock() {
+        // Parent cards need explicit tap targets because nested child cards and resize
+        // handles sit above the container and can otherwise swallow the selection tap.
+        onSelect(block.id)
     }
 
     private func resizeHandle(edge: TimelineResizeEdge) -> some View {

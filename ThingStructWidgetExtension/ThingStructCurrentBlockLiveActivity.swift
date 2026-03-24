@@ -75,78 +75,79 @@ private struct ThingStructLiveActivityLockScreenView: View {
     let context: ActivityViewContext<ThingStructCurrentBlockActivityAttributes>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(context.state.title)
-                    .font(.headline.weight(.semibold))
+                    .font(.title2.weight(.semibold))
                     .lineLimit(1)
+//                    .minimumScaleFactor(0.85)
 
                 Spacer(minLength: 0)
 
                 Text("\(context.state.remainingMinutes)m")
-                    .font(.headline.monospacedDigit())
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.tint)
             }
 
             Text(context.state.timeRangeText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
 
+            Spacer(minLength: 0)
             taskSection
         }
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 20)
     }
 
     @ViewBuilder
     private var taskSection: some View {
         if let topTaskTitle = context.state.topTaskTitle {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
                     Label(taskSummary, systemImage: "checklist")
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
 
-                    Spacer(minLength: 0)
-
-                    Button(intent: CompleteCurrentTaskControlIntent()) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.tint)
-                            .padding(8)
-                            .background(
-                                Circle()
-                                    .fill(.tint.opacity(0.16))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Complete current task")
-                }
-
-                Text(topTaskTitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-        } else {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: statusIconName)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.tint)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(taskSummary)
-                        .font(.subheadline.weight(.semibold))
+                    Text(topTaskTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
-
-                    if let statusMessage = context.state.statusMessage {
-                        Text(statusMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
+                        .minimumScaleFactor(0.8)
                 }
 
                 Spacer(minLength: 0)
+
+                Button(intent: CompleteCurrentTaskControlIntent()) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.tint)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(.tint.opacity(0.14))
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Complete current task")
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                Label(taskSummary, systemImage: statusIconName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+
+                if let statusMessage = context.state.statusMessage {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
             }
         }
     }
@@ -195,5 +196,22 @@ private struct ThingStructLiveActivityLockScreenView: View {
         remainingTaskCount: 0,
         topTaskTitle: nil,
         statusMessage: "No incomplete tasks in this chain."
+    )
+}
+
+#Preview("Live Activity Long Copy", as: .content, using: ThingStructCurrentBlockActivityAttributes(
+    dateISO: "2026-03-22",
+    blockID: UUID().uuidString,
+    deepLinkURL: ThingStructSystemRoute.now(source: .liveActivity).url?.absoluteString ?? "thingstruct://now"
+)) {
+    ThingStructCurrentBlockLiveActivity()
+} contentStates: {
+    ThingStructCurrentBlockActivityAttributes.ContentState(
+        title: "Deep Focus Sprint For System Surface Polish",
+        timeRangeText: "09:00 - 11:00",
+        remainingMinutes: 42,
+        remainingTaskCount: 2,
+        topTaskTitle: "Ship the lock screen layout without clipping the last line",
+        statusMessage: nil
     )
 }
