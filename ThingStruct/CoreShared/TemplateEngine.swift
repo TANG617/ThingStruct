@@ -1,18 +1,24 @@
 import Foundation
 
-// `TemplateEngine` owns all template-centric business rules:
-// - deriving suggested templates from recent day plans
-// - choosing which saved template applies to a date
-// - instantiating / regenerating day plans from templates
-// - updating saved templates and their scheduling rules
+// `TemplateEngine` 负责“模板体系”相关的全部纯规则。
 //
-// This separation keeps template logic out of SwiftUI and out of the day-plan engine.
+// 可以把它理解成模板子系统里的业务引擎：
+// - 从最近几天的 DayPlan 推导候选模板
+// - 决定某个日期最终应该选哪份 SavedTemplate
+// - 把模板实例化成具体某天的 DayPlan
+// - 在规则允许时重建/再生成未来计划
+//
+// 之所以单独拆出来，而不是塞进 Store 或 View：
+// 1. 规则可以独立测试
+// 2. UI 不需要知道模板选择细节
+// 3. DayPlanEngine 和 TemplateEngine 各自只关心一类复杂度
 public enum TemplateEngine {
     public static func previewDayPlan(
         from savedTemplate: SavedDayTemplate,
         on date: LocalDay = LocalDay(year: 2001, month: 1, day: 1)
     ) throws -> DayPlan {
-        // Previewing a template is just "instantiate it on a throwaway date".
+        // 预览模板时，我们只需要“把模板实例化到一个占位日期”。
+        // 这里的日期不重要，重要的是让时间解析和结构校验都能跑起来。
         try instantiateDayPlan(
             from: savedTemplate,
             for: date,
@@ -24,7 +30,8 @@ public enum TemplateEngine {
         referenceDay: LocalDay,
         from dayPlans: [DayPlan]
     ) throws -> [SuggestedDayTemplate] {
-        // Look back over a fixed 3-day window. The UI expects this exact shape.
+        // 当前产品规则规定：候选模板只看最近 3 天窗口。
+        // 先按日期建表，顺便检查是否有重复的 DayPlan。
         var dayPlansByDate: [LocalDay: DayPlan] = [:]
 
         for dayPlan in dayPlans {
@@ -39,6 +46,9 @@ public enum TemplateEngine {
             referenceDay
         ]
 
+        // `compactMap` 在这里表示：
+        // - 没有 DayPlan 的日期 -> 直接跳过
+        // - 有 DayPlan 的日期 -> 转成 SuggestedTemplate
         return try windowDates.compactMap { date in
             guard let dayPlan = dayPlansByDate[date] else { return nil }
             return try suggestedTemplate(from: dayPlan)
@@ -50,8 +60,8 @@ public enum TemplateEngine {
         title: String,
         createdAt: Date = Date()
     ) -> SavedDayTemplate {
-        // We deep-copy blocks so future edits to the saved template cannot mutate
-        // the historical suggested template summary.
+        // 候选模板保存成正式模板时必须 deep copy，
+        // 否则后面编辑正式模板会反向影响候选模板摘要，造成引用污染。
         let copiedBlocks = deepCopy(blocks: suggestedTemplate.blocks)
         return SavedDayTemplate(
             title: title,
@@ -68,7 +78,8 @@ public enum TemplateEngine {
         weekdayRules: [WeekdayTemplateRule],
         overrides: [DateTemplateOverride]
     ) throws -> SavedDayTemplate? {
-        // Date override wins over weekday rule. This priority is a core product rule.
+        // 这里体现了模板选择优先级：
+        // 具体日期 override > 星期规则 weekday rule > 没有模板(nil)
         let templateByID = Dictionary(uniqueKeysWithValues: savedTemplates.map { ($0.id, $0) })
 
         var overrideByDate: [LocalDay: UUID] = [:]
@@ -87,7 +98,7 @@ public enum TemplateEngine {
 
         var ruleByWeekday: [Weekday: UUID] = [:]
         for rule in weekdayRules {
-            // A weekday schedule is a 1-to-1 mapping: one weekday, one selected template.
+            // weekday 调度规则是 1:1 映射：一个星期几只能指向一份模板。
             if ruleByWeekday.updateValue(rule.savedTemplateID, forKey: rule.weekday) != nil {
                 throw ThingStructCoreError.duplicateWeekdayRule(rule.weekday)
             }
@@ -109,12 +120,12 @@ public enum TemplateEngine {
         dayPlanID: UUID = UUID(),
         generatedAt: Date = Date()
     ) throws -> DayPlan {
-        // Template block IDs must not leak into concrete day plans.
-        // We create a fresh ID map so instantiated blocks are independent objects.
+        // 模板里的 block ID 只是“模板内部身份”；
+        // 真正落到某天计划里时，必须生成新的 ID，避免模板和实例共享身份。
         var blockIDMap: [UUID: UUID] = [:]
 
         for block in savedTemplate.blocks {
-            // Every instantiated block gets a fresh identity while preserving graph shape.
+            // 给每个模板 block 预先分配一个新 UUID，稍后父子关系也通过这张映射表重写。
             blockIDMap[block.id] = UUID()
         }
 
@@ -125,7 +136,7 @@ public enum TemplateEngine {
 
             let parentBlockID: UUID?
             if let parentTemplateBlockID = blockTemplate.parentTemplateBlockID {
-                // Parent references must be translated through the same remap.
+                // 父子引用也必须一起 remap，否则子节点还会指向模板里的旧父 ID。
                 guard let mappedParentID = blockIDMap[parentTemplateBlockID] else {
                     throw ThingStructCoreError.missingTemplateParent(
                         blockID: blockTemplate.id,
@@ -145,7 +156,7 @@ public enum TemplateEngine {
                     return lhs.id.uuidString < rhs.id.uuidString
                 }
                 .map { blueprint in
-                    // Task blueprints become incomplete task instances on each materialized day.
+                    // 模板任务在实例化时一律变成“未完成”的真实任务。
                     TaskItem(
                         title: blueprint.title,
                         order: blueprint.order,
@@ -175,6 +186,8 @@ public enum TemplateEngine {
             hasUserEdits: false,
             blocks: instantiatedBlocks
         )
+        // 模板实例化完成后仍然要走 `DayPlanEngine.resolved`，
+        // 因为 block 的 resolved 时间、结构合法性都还需要重新计算。
         return try DayPlanEngine.resolved(plan)
     }
 
@@ -186,7 +199,7 @@ public enum TemplateEngine {
         overrides: [DateTemplateOverride],
         generatedAt: Date = Date()
     ) throws -> DayPlan {
-        // If a plan already exists, it is treated as the source of truth.
+        // 已存在的 DayPlan 永远优先视为真实来源，不会被模板再次覆盖。
         if let existingPlan = try uniqueDayPlan(for: date, in: existingDayPlans) {
             return existingPlan
         }
@@ -197,7 +210,7 @@ public enum TemplateEngine {
             weekdayRules: weekdayRules,
             overrides: overrides
         ) else {
-            // "No matching template" is a valid state, not an error.
+            // 没匹配到模板不是错误，而是一种合法状态：当天就是空计划。
             return DayPlan(
                 date: date,
                 sourceSavedTemplateID: nil,
@@ -223,7 +236,8 @@ public enum TemplateEngine {
         overrides: [DateTemplateOverride],
         generatedAt: Date = Date()
     ) throws -> DayPlan {
-        // Regeneration is intentionally conservative because it can overwrite user-visible plans.
+        // regenerate 是“保守”的未来计划再生成：
+        // 允许系统刷新未来计划，但尽量不碰用户已经明确动过的内容。
         guard date > today else {
             throw ThingStructCoreError.regenerationNotAllowedForNonFutureDate(date)
         }

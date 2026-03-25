@@ -1,16 +1,21 @@
 import Foundation
 import SwiftUI
 
-// Small formatting helpers often live in shared files like this in SwiftUI projects.
-// The goal is to keep domain logic elsewhere and put display-only helpers here.
+// 这个文件放的是“只服务展示”的小工具。
+// 一个很重要的分层习惯是：
+// - 业务规则放 Engine / Store / Repository
+// - 纯显示格式化放到这种 shared UI helper 里
+// 这样可以避免 domain model 被 UI 文案细节污染。
 extension Int {
     var formattedTime: String {
+        // 这里把“分钟数”格式化成 `HH:mm`。
         let hour = self / 60
         let minute = self % 60
         return String(format: "%02d:%02d", hour, minute)
     }
 
     var timelineLayerBadgeTitle: String {
+        // layer 0 叫 Base，更高层叫 L1/L2/L3...
         self == 0 ? "Base" : "L\(self)"
     }
 
@@ -29,6 +34,8 @@ extension Int {
 
 extension LocalDay {
     var titleText: String {
+        // `LocalDay` 是项目自己的日期值类型，不是 Foundation 的 `Date`。
+        // 如果要展示给用户看，通常要先还原成 `Date` 再交给 `DateFormatter`。
         let components = DateComponents(year: year, month: month, day: day)
         guard let date = Calendar.current.date(from: components) else {
             return description
@@ -42,6 +49,7 @@ extension LocalDay {
     }
 
     var nowNavigationTitle: String {
+        // `Now` 页顶部标题故意固定成英文缩写风格，避免受当前系统语言格式影响太大。
         let components = DateComponents(year: year, month: month, day: day)
         guard let date = Calendar.current.date(from: components) else {
             return description
@@ -55,12 +63,15 @@ extension LocalDay {
 }
 
 
+// 通用加载占位视图。
+// 多个根页面都会复用它，而不是每个页面自己拼一个 loading UI。
 struct ScreenLoadingView: View {
     let title: String
     let systemImage: String
     var description: String?
 
     var body: some View {
+        // SwiftUI 的视图本质就是返回一棵声明式视图树。
         VStack(spacing: 14) {
             ProgressView()
                 .controlSize(.large)
@@ -80,6 +91,8 @@ struct ScreenLoadingView: View {
     }
 }
 
+// 可恢复错误视图。
+// 它不是致命崩溃，而是“给用户一个 retry 入口”的失败状态。
 struct RecoverableErrorView: View {
     let title: String
     let message: String
@@ -87,6 +100,7 @@ struct RecoverableErrorView: View {
     let retry: () -> Void
 
     var body: some View {
+        // `ContentUnavailableView` 是系统提供的标准空状态/错误状态容器。
         ContentUnavailableView {
             Label(title, systemImage: "exclamationmark.triangle")
         } description: {
@@ -100,12 +114,12 @@ struct RecoverableErrorView: View {
     }
 }
 
-// Many root screens in the app follow the same control flow:
-// 1. Show a loading placeholder before the store is ready.
-// 2. Try to build a screen model.
-// 3. Show either the screen content or a recoverable error.
+// 多个根页面都有同一套控制流：
+// 1. store 还没准备好时显示 loading
+// 2. 尝试构建 screen model
+// 3. 成功则渲染内容，失败则展示可恢复错误
 //
-// This shared wrapper keeps that pattern consistent across tabs.
+// 这个泛型容器把这套流程统一了，避免每个 tab 页面重复写。
 struct RootScreenContainer<Value, Content: View>: View {
     let isLoaded: Bool
     let loadingTitle: String
@@ -125,6 +139,7 @@ struct RootScreenContainer<Value, Content: View>: View {
                     description: loadingDescription
                 )
             } else {
+                // `Result(catching:)` 是项目里对“可能抛错的加载过程”做 UI 分支的简洁写法。
                 switch Result(catching: load) {
                 case let .success(value):
                     content(value)
@@ -141,6 +156,7 @@ struct RootScreenContainer<Value, Content: View>: View {
     }
 }
 
+// 下面这些 `#Preview` 主要用来单独验证通用 UI 组件，而不是跑完整页面。
 #Preview("Loading State") {
     ScreenLoadingView(
         title: "Loading Today",

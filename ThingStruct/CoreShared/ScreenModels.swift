@@ -1,13 +1,18 @@
 import Foundation
 
-// The presentation layer converts domain models into view-friendly screen models.
+// 这是“presentation layer（展示映射层）”。
 //
-// This file is intentionally separate from SwiftUI code:
-// - it keeps layout-free transformation logic testable
-// - views can stay focused on rendering
-// - the store can ask for fully prepared screen data
+// 核心思想非常重要：
+// - `Models.swift` 里的类型代表业务真相
+// - `ScreenModels.swift` 里的类型代表“某个页面此刻想显示什么”
+//
+// 两者不应该混在一起，原因是：
+// 1. UI 经常需要额外字段（如高亮、排序、初始滚动位置）
+// 2. 这些字段不适合反向污染业务模型
+// 3. 展示映射独立后，页面测试和纯逻辑测试都更容易做
 
-// `Now` screen models.
+// `Now` 页面的链路展示项。
+// 它不一定是 document 里的原始 block，而是被 presentation 层整理后的结果。
 public struct NowChainItem: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var title: String
@@ -48,7 +53,11 @@ public struct NowScreenModel: Equatable, Sendable {
     public var taskSections: [NowTaskSection]
 }
 
-// `Today` screen models.
+// `Today` 页面会同时展示：
+// - 时间轴上的 block
+// - 空白时段 open slot
+// - 当前选中 block 详情
+// - 用户当前可添加的 block 类型
 public struct TimelineBlockItem: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var parentBlockID: UUID?
@@ -113,7 +122,8 @@ public struct TodayScreenModel: Equatable, Sendable {
     public var initialFocusBlockID: UUID?
 }
 
-// `Templates` screen models.
+// `Templates` 页面关心的是“模板摘要”和“今天/明天的调度结果”，
+// 而不是整份模板的全部底层字段。
 public struct SuggestedTemplateSummary: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var sourceDate: LocalDay
@@ -150,15 +160,17 @@ public struct TemplatesScreenModel: Equatable, Sendable {
     public var tomorrowSchedule: TemplateScheduleSummary
 }
 
-// `ThingStructPresentation` is a pure mapper from domain state to UI state.
-// It should not perform persistence or mutate the document.
+// `ThingStructPresentation` 是纯映射器：
+// 输入 document + 当前上下文，输出屏幕模型。
+// 它不写文件、不改 document，也不接触 SwiftUI 组件。
 public enum ThingStructPresentation {
     public static func nowScreenModel(
         document: ThingStructDocument,
         date: LocalDay,
         minuteOfDay: Int
     ) throws -> NowScreenModel {
-        // `Now` is all about the currently active chain of blocks at a single minute.
+        // `Now` 页面本质上是在问：
+        // “某一天的某一分钟，当前激活链(active chain)是什么？”
         let plan = document.dayPlan(for: date) ?? DayPlan(date: date)
         let selection = try DayPlanEngine.activeSelection(in: plan, at: minuteOfDay)
         let sortedChain = selection.chain.sorted(by: nowChainSort)
@@ -178,6 +190,7 @@ public enum ThingStructPresentation {
 
         let statusMessage: String?
         if !taskSections.isEmpty {
+            // 有任务时，任务区自己就已经表达状态，不再额外显示文案。
             statusMessage = nil
         } else if selection.activeBlock?.isBlankBaseBlock == true {
             statusMessage = "You're in open time right now."
@@ -203,8 +216,8 @@ public enum ThingStructPresentation {
         selectedBlockID: UUID?,
         currentMinute: Int?
     ) throws -> TodayScreenModel {
-        // `Today` still asks for `runtimeResolved`, but only to derive open slots and
-        // current-time behavior. The visible timeline itself stays user-authored only.
+        // `Today` 页比 `Now` 更复杂：
+        // 它需要运行时 blank block 来推导 open slots，但真正展示的时间轴仍只画用户 block。
         let runtimePlan = try DayPlanEngine.runtimeResolved(document.dayPlan(for: date) ?? DayPlan(date: date))
         let openSlots = runtimePlan.blocks
             .filter { !$0.isCancelled && $0.isBlankBaseBlock }
@@ -223,6 +236,7 @@ public enum ThingStructPresentation {
                 )
             }
             .sorted { lhs, rhs in
+                // 统一按照时间顺序排序，避免 UI 层自己再做二次整理。
                 if lhs.startMinuteOfDay != rhs.startMinuteOfDay {
                     return lhs.startMinuteOfDay < rhs.startMinuteOfDay
                 }

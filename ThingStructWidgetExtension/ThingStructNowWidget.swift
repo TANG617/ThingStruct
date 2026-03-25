@@ -2,11 +2,18 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
+// `TimelineEntry` 是 WidgetKit 的核心概念之一。
+// 你可以把它理解成：“在某个时刻，Widget 应该显示什么内容”。
 struct ThingStructNowWidgetEntry: TimelineEntry {
     let date: Date
     let snapshot: ThingStructWidgetSnapshot
 }
 
+// `TimelineProvider` 负责给系统提供：
+// - 占位内容 placeholder
+// - 预览/配置时的 snapshot
+// - 正式运行时的一条 timeline
+// Widget 不是一直常驻执行的，系统会按 timeline 按需拉取内容。
 struct ThingStructNowWidgetProvider: TimelineProvider {
     private let repository = ThingStructDocumentRepository.widgetLive
 
@@ -21,6 +28,7 @@ struct ThingStructNowWidgetProvider: TimelineProvider {
         in context: Context,
         completion: @escaping (ThingStructNowWidgetEntry) -> Void
     ) {
+        // `getSnapshot` 常用于小组件库预览、编辑配置时的即时展示。
         completion(makeEntry(at: .now, isPreview: context.isPreview))
     }
 
@@ -28,6 +36,7 @@ struct ThingStructNowWidgetProvider: TimelineProvider {
         in context: Context,
         completion: @escaping (Timeline<ThingStructNowWidgetEntry>) -> Void
     ) {
+        // timeline 可以看成“未来一段时间内的刷新计划”。
         let entry = makeEntry(at: .now, isPreview: context.isPreview)
         let refreshDate = ThingStructWidgetSnapshotBuilder.nextRefreshDate(
             for: entry.snapshot,
@@ -46,6 +55,7 @@ struct ThingStructNowWidgetProvider: TimelineProvider {
         at date: Date,
         isPreview: Bool
     ) -> ThingStructNowWidgetEntry {
+        // 预览模式下不碰真实仓库，直接用占位数据。
         if isPreview {
             return ThingStructNowWidgetEntry(
                 date: date,
@@ -62,6 +72,7 @@ struct ThingStructNowWidgetProvider: TimelineProvider {
                 )
             )
         } catch {
+            // Widget 读不到文档时不要崩，退化成“提示用户打开 app”即可。
             return ThingStructNowWidgetEntry(
                 date: date,
                 snapshot: ThingStructWidgetSnapshot(
@@ -79,12 +90,14 @@ struct ThingStructNowWidgetProvider: TimelineProvider {
     }
 }
 
+// 真正注册给系统的小组件配置。
 struct ThingStructNowWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(
             kind: ThingStructSharedConfig.widgetKind,
             provider: ThingStructNowWidgetProvider()
         ) { entry in
+            // `entry` 是系统按 timeline 注入到视图里的当前快照。
             ThingStructNowWidgetEntryView(entry: entry)
                 .widgetURL(entry.snapshot.destinationURL)
         }
@@ -100,12 +113,18 @@ struct ThingStructNowWidget: Widget {
     }
 }
 
+// 这是 widget 的根视图。
+// 与 app 内普通 SwiftUI View 类似，但运行约束更严格：
+// - 不能随意做副作用
+// - 数据要来自 entry
+// - 需要适配多种 widget family
 private struct ThingStructNowWidgetEntryView: View {
     @Environment(\.widgetFamily) private var family
 
     let entry: ThingStructNowWidgetEntry
 
     private var shownTasks: [ThingStructWidgetTaskItem] {
+        // 小组件空间非常有限，所以这里只截前 3 条。
         Array(entry.snapshot.tasks.prefix(3))
     }
 
@@ -132,6 +151,7 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 
     private var accessoryInlineText: String {
+        // accessoryInline 空间极窄，所以只保留一行核心文本。
         if let title = entry.snapshot.currentBlockTitle,
            let timeRange = entry.snapshot.currentBlockTimeRangeText {
             let endTime = timeRange.split(separator: "-").last?
@@ -149,6 +169,8 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 
     var body: some View {
+        // WidgetKit 会告诉我们当前 family，
+        // 同一个 widget 入口通常要为不同尺寸准备不同布局。
         switch family {
         case .systemSmall:
             smallLayout
@@ -166,6 +188,7 @@ private struct ThingStructNowWidgetEntryView: View {
     private var accessoryInlineLayout: some View {
         Text(accessoryInlineText)
             .lineLimit(1)
+            // `containerBackground(for: .widget)` 是 iOS 17 之后的 widget 背景声明方式。
             .containerBackground(for: .widget) {
                 Color.clear
             }
@@ -229,6 +252,7 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 
     private var mediumLayout: some View {
+        // 中号组件空间更大，可以左边展示当前 block，右边列任务。
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 10) {
                 header
@@ -277,6 +301,7 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 
     private var currentBlockSummary: some View {
+        // 当前 block 的信息卡片。
         VStack(alignment: .leading, spacing: 4) {
             Text(entry.snapshot.currentBlockTitle ?? "No plan for right now")
                 .font(.headline.weight(.semibold))
@@ -298,6 +323,7 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 
     private var smallBlockStack: some View {
+        // 小号组件用“叠卡片”来暗示 overlay 层次。
         let reversed = Array(shownBlocks.reversed())
 
         return ZStack(alignment: .topLeading) {
@@ -313,6 +339,7 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 
     private func emptyState(isCompact: Bool) -> some View {
+        // 没有任务可显示时，用状态文案代替空列表。
         VStack(alignment: .leading, spacing: 6) {
             Text(entry.snapshot.remainingTaskCount == 0 ? "Nothing to check off" : "Tasks are up to date")
                 .font(isCompact ? .footnote.weight(.semibold) : .subheadline.weight(.semibold))
@@ -338,6 +365,7 @@ private struct ThingStructNowWidgetEntryView: View {
         let style = style(for: item)
 
         return Button(
+            // widget 里的按钮不是普通闭包按钮，而是 intent 驱动的系统动作按钮。
             intent: ToggleTaskCompletionIntent(
                 dateISO: item.dateISO,
                 blockID: item.blockID,
@@ -382,6 +410,7 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 
     private var widgetBackground: some View {
+        // 背景仍然是纯声明式 SwiftUI 视图树。
         ZStack {
             LinearGradient(
                 colors: [
@@ -405,6 +434,7 @@ private struct ThingStructNowWidgetEntryView: View {
         _ item: ThingStructWidgetBlockItem,
         isFront: Bool
     ) -> some View {
+        // 前景卡片和背景卡片只是在样式上有所区别，数据模型还是同一个。
         let style = style(for: item)
 
         return VStack(alignment: .leading, spacing: 5) {
@@ -458,6 +488,8 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 }
 
+// `#Preview` 是 Xcode 的 SwiftUI 预览声明。
+// 这里给不同尺寸准备几组典型状态，方便独立调 widget 布局。
 #Preview("Small - Block Stack", as: .systemSmall) {
     ThingStructNowWidget()
 } timeline: {
@@ -478,6 +510,7 @@ private struct ThingStructNowWidgetEntryView: View {
 
 private extension ThingStructWidgetSnapshot {
     var destinationURL: URL? {
+        // 点击 widget 后跳回 app 时，优先把用户带到“当前块/当前任务”。
         let currentBlockID = blocks.first(where: \.isCurrent)?.blockID ?? blocks.first?.blockID
         let currentTaskID = tasks.first(where: \.isCurrentBlock)?.taskID ?? tasks.first?.taskID
 
@@ -494,6 +527,7 @@ private extension ThingStructWidgetSnapshot {
     }
 
     static var previewFocused: ThingStructWidgetSnapshot {
+        // 以下几个 preview 数据只是为了预览不同视觉状态，不参与正式业务。
         ThingStructWidgetSnapshot(
             date: LocalDay(year: 2026, month: 3, day: 22),
             minuteOfDay: 10 * 60,

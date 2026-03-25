@@ -1,8 +1,10 @@
 import Foundation
 
-// SwiftUI previews are much more useful when they can boot realistic app state quickly.
-// This helper centralizes preview-only factories so production files do not need to
-// contain mock-building code inline.
+// `PreviewSupport` 是 SwiftUI 预览专用的样本数据工厂。
+// 它解决两个常见问题：
+// 1. 预览想直接看到“像真实 app 一样”的画面，而不是一堆空白
+// 2. 正式代码不应该混进大量 mock/演示数据构造逻辑
+// 对 C++ 开发者可以理解成：专门给 UI 调试准备的一组 fixture / test data builder。
 @MainActor
 enum PreviewSupport {
     static var referenceDay: LocalDay {
@@ -14,6 +16,8 @@ enum PreviewSupport {
     }
 
     static func seededDocument(on referenceDay: LocalDay? = nil) -> ThingStructDocument {
+        // `try!` 在生产代码里通常要谨慎，但在预览辅助里是合理的：
+        // 如果样本数据都构不出来，预览本身就没有继续展示的意义。
         let day = referenceDay ?? self.referenceDay
         return try! SampleDataFactory.seededDocument(referenceDay: day, generatedAt: generatedAt)
     }
@@ -29,8 +33,8 @@ enum PreviewSupport {
         lastErrorMessage: String? = nil
     ) -> ThingStructStore {
         let day = selectedDate ?? referenceDay
-        // Each preview gets its own temporary file URL so previews do not interfere
-        // with one another or with the real app document.
+        // 每个预览实例都拿一份独立的临时文件地址。
+        // 这样多个 preview 不会互相污染，也不会误碰真实 app 文档。
         let documentRepository = ThingStructDocumentRepository(
             fileURL: FileManager.default.temporaryDirectory
                 .appending(path: "ThingStructPreview")
@@ -60,8 +64,10 @@ enum PreviewSupport {
         document: ThingStructDocument? = nil,
         minuteOfDay: Int = 9 * 60 + 30
     ) -> NowScreenModel {
-        // These helpers skip the UI store entirely and ask the presentation layer directly.
-        // That makes previews good for validating pure view layout.
+        // 这里直接调用 presentation 层，而不是先造一个完整 store。
+        // 好处是：
+        // - 预览更轻
+        // - 更适合单独验证“某个 View 的布局是否正确”
         let day = referenceDay
         return try! ThingStructPresentation.nowScreenModel(
             document: document ?? seededDocument(on: day),
@@ -106,10 +112,13 @@ enum PreviewSupport {
     }
 
     static func selectedBlockDetailModel() -> BlockDetailModel {
+        // 预览经常需要一个“当前选中的 block 详情”来驱动编辑器或详情页。
         todayModel().selectedBlock!
     }
 
     static func persistedSelectedBlock() -> TimeBlock {
+        // 这里拿的是 document 里真正持久化的 `TimeBlock`，而不是 screen model。
+        // 学习时要特别注意这两者的区别：前者是业务真值，后者是给界面展示的投影。
         let document = seededDocument()
         let detail = selectedBlockDetailModel()
         return document.dayPlan(for: referenceDay)!.blocks.first(where: { $0.id == detail.id })!
@@ -128,6 +137,8 @@ enum PreviewSupport {
 
     static func sampleBlockDraftOverlay() -> BlockDraft {
         let parent = persistedSelectedBlock()
+        // overlay 草稿需要知道父块当前已经解析出来的时间范围，
+        // 因为它的相对时间是基于父块算出来的。
         var draft = BlockDraft.overlay(
             parentBlockID: parent.id,
             layerIndex: 2,
@@ -147,6 +158,8 @@ enum PreviewSupport {
     }
 
     static func sampleBlockDraftEdit() -> BlockDraft {
+        // “编辑已有 block” 和 “新建 block” 的草稿来源不同：
+        // 编辑时要把原始 block 与详情模型一起喂给 `BlockDraft.editing(...)`。
         let block = persistedSelectedBlock()
         return BlockDraft.editing(
             detail: selectedBlockDetailModel(),
@@ -170,6 +183,7 @@ enum PreviewSupport {
     }
 
     static func sampleOverlayTemplateBlock() -> BlockTemplate {
+        // 这个样本专门用于展示模板里的相对块。
         let baseID = UUID()
         return BlockTemplate(
             parentTemplateBlockID: baseID,

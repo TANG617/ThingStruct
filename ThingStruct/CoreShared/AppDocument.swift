@@ -1,9 +1,8 @@
 import Foundation
 
-// `ThingStructDocument` is the top-level persisted object for the entire app.
-// If you imagine the app state as a tree, this is the root node that gets encoded to JSON.
-//
-// Everything the user can persist must be reachable from here.
+// `ThingStructDocument` 是整个应用持久化到磁盘的根对象。
+// 如果把 app 的可保存状态想成一棵树，这里就是根节点，最终会被编码成 JSON。
+// 一切“用户真正保存下来的东西”，都必须能从这里访问到。
 public struct ThingStructDocument: Equatable, Codable, Sendable {
     public var dayPlans: [DayPlan]
     public var savedTemplates: [SavedDayTemplate]
@@ -24,24 +23,24 @@ public struct ThingStructDocument: Equatable, Codable, Sendable {
 }
 
 public extension ThingStructDocument {
-    // Convenient lookup helper. This is intentionally linear because the document
-    // is still small and keeping the serialized shape simple is valuable.
+    // 这里故意使用线性查找，而不是额外维护索引表。
+    // 原因是当前文档规模还小，保持序列化结构简单、直白，比提前做复杂优化更重要。
     func dayPlan(for date: LocalDay) -> DayPlan? {
         dayPlans.first(where: { $0.date == date })
     }
 }
 
-// `SampleDataFactory` exists purely to make first launch and previews pleasant.
-// It gives the UI a believable dataset before a user has authored real content.
+// `SampleDataFactory` 只服务于首次启动体验和 SwiftUI 预览。
+// 在用户还没有创建真实数据之前，它负责准备一份“看起来像真实使用场景”的样本文档。
 public enum SampleDataFactory {
     public static func seededDocument(
         referenceDay: LocalDay = .today(),
         generatedAt: Date = Date()
     ) throws -> ThingStructDocument {
-        // The seeded data intentionally covers a small rolling window so:
-        // - `Now` has something active today
-        // - `Templates` has recent days to summarize
-        // - tomorrow can demonstrate template materialization
+        // 样本数据只覆盖一个很小的滚动窗口：
+        // - 今天：让 Now 页面有当前内容可看
+        // - 最近几天：让 Templates 页面有历史样本可分析
+        // - 明天：可以演示模板如何被物化成实际 day plan
         let recentDays = [
             referenceDay.adding(days: -2),
             referenceDay.adding(days: -1),
@@ -104,8 +103,8 @@ public enum SampleDataFactory {
         variant: Int,
         generatedAt: Date
     ) throws -> DayPlan {
-        // The factory builds plain domain values first, then asks `DayPlanEngine`
-        // to validate and resolve them, just like production code does.
+        // 样本工厂先构造普通领域对象，再交给 `DayPlanEngine` 做校验和解析。
+        // 这点很重要：即使是样本数据，也尽量走和生产环境一致的业务入口。
         let morning = TimeBlock(
             layerIndex: 0,
             title: "Morning",

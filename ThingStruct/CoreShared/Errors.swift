@@ -1,10 +1,14 @@
 import Foundation
 
-// Centralized domain errors for the core layer.
+// 这里集中定义 core 层的领域错误。
 //
-// The app intentionally throws typed errors from the engines instead of returning
-// ad-hoc booleans, because the failure modes carry useful product semantics:
-// "duplicate weekday rule" is very different from "block overlaps parent".
+// 为什么不用简单的 `true/false`？
+// 因为失败原因本身就携带业务语义：
+// - “weekday rule 重复” 和
+// - “block 超出父块范围”
+// 对产品和 UI 来说完全不是一回事。
+//
+// 对 C++ 开发者可以把它理解成：一组带业务含义的强类型错误码。
 public enum ThingStructCoreError: Error, Equatable, Sendable {
     case duplicateBlockID(UUID)
     case missingBlock(UUID)
@@ -35,6 +39,8 @@ public enum ThingStructCoreError: Error, Equatable, Sendable {
 
 extension ThingStructCoreError: LocalizedError {
     public var errorDescription: String? {
+        // 这里给每个领域错误映射成面向用户/调试者可读的消息。
+        // UI 层通常不会关心具体 enum case，只需要 `localizedDescription`。
         switch self {
         case .duplicateBlockID:
             return "Two blocks share the same identifier."

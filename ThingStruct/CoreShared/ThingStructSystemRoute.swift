@@ -1,5 +1,7 @@
 import Foundation
 
+// 这一组常量是 app、widget、notification、shortcut 等系统表面共享的配置。
+// 之所以放在一起，是因为它们大多都和“系统集成入口”有关。
 enum ThingStructSharedConfig {
     static let appGroupID = "group.tang.ThingStruct"
     static let tintPresetDefaultsKey = "THINGSTRUCT_TINT_PRESET"
@@ -24,6 +26,8 @@ enum ThingStructSharedConfig {
     static let quickActionCurrentBlock = "tang.ThingStruct.quickaction.currentBlock"
 }
 
+// `ThingStructSystemSource` 用来标记“这次系统跳转/动作是从哪里来的”。
+// 这既方便调试，也方便未来做埋点或差异化行为。
 enum ThingStructSystemSource: String, Codable, Sendable {
     case app
     case widget
@@ -34,6 +38,13 @@ enum ThingStructSystemSource: String, Codable, Sendable {
     case liveActivity
 }
 
+// `ThingStructSystemRoute` 是项目内部统一的路由描述。
+//
+// 重点理解：
+// - 外部世界看到的是 URL
+// - app 内部真正流转的是这个 enum
+//
+// 这能把“字符串解析”限制在一个地方，避免整个项目到处手写 `if url.host == ...`。
 enum ThingStructSystemRoute: Equatable, Sendable {
     case now(source: ThingStructSystemSource? = nil)
     case today(
@@ -47,6 +58,7 @@ enum ThingStructSystemRoute: Equatable, Sendable {
     case endCurrentBlockLiveActivity(source: ThingStructSystemSource? = nil)
 
     init?(url: URL) {
+        // 先做最外层过滤：scheme 不对，说明根本不是本 app 的路由。
         guard
             url.scheme?.lowercased() == ThingStructSharedConfig.deepLinkScheme,
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -58,6 +70,9 @@ enum ThingStructSystemRoute: Equatable, Sendable {
         let routeSource = host.isEmpty
             ? components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             : host
+        // 这里兼容两种 URL 形态：
+        // - thingstruct://today?date=...
+        // - thingstruct:///today?date=...
         let route = routeSource.lowercased()
 
         let source = components.queryItems?.thingStructValue(for: "source")
@@ -85,11 +100,13 @@ enum ThingStructSystemRoute: Equatable, Sendable {
             self = .endCurrentBlockLiveActivity(source: source)
 
         default:
+            // 无法识别的 host/path 直接返回 nil，让调用方决定是否忽略。
             return nil
         }
     }
 
     var url: URL? {
+        // 与 `init?(url:)` 相反，这里负责把内部枚举重新序列化成 URL。
         var components = URLComponents()
         components.scheme = ThingStructSharedConfig.deepLinkScheme
 
@@ -129,6 +146,7 @@ enum ThingStructSystemRoute: Equatable, Sendable {
         taskID: UUID? = nil,
         source: ThingStructSystemSource? = nil
     ) -> [URLQueryItem]? {
+        // 只有非 nil 的参数才写进 URL，保持生成的 deep link 简洁。
         var items: [URLQueryItem] = []
 
         if let date {
@@ -149,12 +167,15 @@ enum ThingStructSystemRoute: Equatable, Sendable {
 }
 
 extension [URLQueryItem] {
+    // 给 queryItems 数组补一个“按名称取值”的小 helper。
     func thingStructValue(for name: String) -> String? {
         first(where: { $0.name == name })?.value
     }
 }
 
 extension LocalDay {
+    // 从 ISO 日期字符串（例如 "2026-03-25"）构造 `LocalDay`。
+    // 这个 helper 主要服务 deep link / notification / widget 参数解析。
     init?(isoDateString: String) {
         let parts = isoDateString.split(separator: "-", omittingEmptySubsequences: false)
         guard
@@ -173,6 +194,8 @@ extension LocalDay {
         minuteOfDay: Int = 0,
         calendar: Calendar = .current
     ) -> Date? {
+        // 把“某天 + 某分钟”重新还原成系统 `Date`。
+        // 这常用于通知触发时间、边界计算等需要真实时间点的地方。
         guard let startOfDay = calendar.date(
             from: DateComponents(year: year, month: month, day: day)
         ) else {
@@ -184,6 +207,7 @@ extension LocalDay {
 }
 
 extension Date {
+    // 把系统 Date 投影为“当天第几分钟”，是本项目里最常用的时间表示之一。
     var minuteOfDay: Int {
         let components = Calendar.current.dateComponents([.hour, .minute], from: self)
         return (components.hour ?? 0) * 60 + (components.minute ?? 0)

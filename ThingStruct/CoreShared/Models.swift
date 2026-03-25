@@ -1,15 +1,19 @@
 import Foundation
 
-// This file defines the app's core domain model.
+// 这是项目最核心的数据模型文件。
 //
-// If you come from C++:
-// - most entities here are plain value types (`struct`) rather than reference types
-// - `enum` with associated values replaces many "tag + payload" class hierarchies
-// - `Codable` means the type can be serialized/deserialized
-// - `Sendable` means the value is safe to pass across concurrency boundaries
+// 如果你来自 C++，这里有几个 Swift 世界观差异非常值得先建立：
+// 1. 这里绝大多数模型都用 `struct`，也就是值类型(value type)。
+//    传值、复制、比较会比传统“到处 new class”更常见。
+// 2. `enum` 可以带关联值，很多场景下可以替代“基类 + 子类 + tag”的层级设计。
+// 3. `Codable` 表示该类型可编码/解码，通常可直接写成 JSON。
+// 4. `Sendable` 表示该值可以安全跨并发边界传递。
+//
+// 这个文件只定义“系统里有哪些数据”，不关心 UI 怎么画，也不关心文件怎么保存。
 
-// `LocalDay` is a date without time-of-day or timezone ambiguity.
-// This is much safer for planning logic than using `Date` everywhere.
+// `LocalDay` 表示“本地自然日”而不是某个精确时间点。
+// 为什么不用 `Date` 直接表示日期？
+// 因为 `Date` 天然带时区、秒数、绝对时间语义，而计划系统更关心“某天”。
 public struct LocalDay: Hashable, Codable, Comparable, Sendable {
     public let year: Int
     public let month: Int
@@ -21,6 +25,8 @@ public struct LocalDay: Hashable, Codable, Comparable, Sendable {
         self.day = day
     }
 
+    // 把系统 `Date` 压缩成“年-月-日”三元组。
+    // 这是从“时间点”投影到“自然日”的典型做法。
     public nonisolated init(date: Date, calendar: Calendar = .current) {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         guard
@@ -45,6 +51,7 @@ public struct LocalDay: Hashable, Codable, Comparable, Sendable {
     }
 
     public nonisolated static func < (lhs: LocalDay, rhs: LocalDay) -> Bool {
+        // Swift 支持直接比较元组 `(a, b, c)`，这比手写多层 if 更简洁。
         (lhs.year, lhs.month, lhs.day) < (rhs.year, rhs.month, rhs.day)
     }
 
@@ -61,6 +68,8 @@ public struct LocalDay: Hashable, Codable, Comparable, Sendable {
     }
 
     public nonisolated func adding(days: Int, calendar: Calendar = .thingStructGregorian) -> LocalDay {
+        // 注意：虽然项目 README 里“每天固定 1440 分钟”，
+        // 但做日历加减时仍然使用 `Calendar`，保证年月日推进是正确的。
         guard
             let startDate = calendar.date(from: DateComponents(year: year, month: month, day: day)),
             let adjustedDate = calendar.date(byAdding: .day, value: days, to: startDate)
@@ -88,8 +97,9 @@ extension LocalDay: CustomStringConvertible {
 }
 
 public extension Calendar {
-    // The planning engines use a fixed Gregorian calendar in GMT when they need
-    // stable date arithmetic. This avoids locale/timezone surprises inside core logic.
+    // 业务引擎内部使用一个固定 Gregorian + GMT 的 calendar。
+    // 这样可以减少不同用户地区设置对“纯规则计算”的干扰。
+    // 这是一个很典型的“业务规则用稳定语义，展示层再做本地化”的思路。
     nonisolated static var thingStructGregorian: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
@@ -98,8 +108,9 @@ public extension Calendar {
 }
 
 public extension Int {
-    // Time editing in the app works on a 5-minute grid.
-    // These helpers are the low-level building blocks for snapping/clamping.
+    // 时间编辑基于 5 分钟网格，所以这里给 `Int` 加上了几个对齐/夹取 helper。
+    // Swift 允许给已有类型写 extension，这点和 C++ 的自由函数 + ADL 很不一样。
+    // 这些方法本质上是“把分钟数映射到合法网格”的工具。
     nonisolated func snapped(toStep step: Int, within range: ClosedRange<Int>) -> Int {
         precondition(step > 0, "Step must be positive.")
 
@@ -123,6 +134,8 @@ public extension Int {
     }
 
     nonisolated func aligned(toStep step: Int, within range: ClosedRange<Int>) -> Int? {
+        // `aligned` 的语义比 `snapped` 更严格：
+        // 它要求结果必须真的落在合法范围内，否则返回 nil。
         precondition(step > 0, "Step must be positive.")
 
         let lowerBound = range.lowerBound.roundedUp(toStep: step)
@@ -145,8 +158,8 @@ public extension Int {
     }
 }
 
-// `Weekday` is kept as an enum instead of raw integers everywhere so invalid values
-// are harder to represent.
+// 星期几使用 enum，而不是到处传播裸整数。
+// 这是“让非法状态更难表达”的经典类型设计策略。
 public enum Weekday: Int, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case sunday = 1
     case monday = 2
@@ -159,6 +172,7 @@ public enum Weekday: Int, Codable, CaseIterable, Hashable, Sendable, Identifiabl
     public var id: Int { rawValue }
 
     public var shortName: String {
+        // 这里是纯展示文本，不参与业务规则。
         switch self {
         case .sunday: return "Sun"
         case .monday: return "Mon"
@@ -208,8 +222,8 @@ public enum Weekday: Int, Codable, CaseIterable, Hashable, Sendable, Identifiabl
 }
 
 public extension Set where Element == Weekday {
-    // These helpers bridge between the convenient in-memory representation (`Set<Weekday>`)
-    // and persistence/UI needs that often prefer arrays.
+    // 内存里用 `Set<Weekday>` 判断包含最方便；
+    // 存储/UI 里数组更常见，所以这里提供桥接 helper。
     var toIntArray: [Int] {
         map(\.rawValue).sorted()
     }
@@ -219,14 +233,16 @@ public extension Set where Element == Weekday {
     }
 }
 
-// `kind` separates user-authored blocks from runtime-only blank filler blocks.
+// `kind` 用来区分：
+// - 用户真正创建/保存的 block
+// - 运行时为了填补时间空洞而临时生成的 blank block
 public enum TimeBlockKind: String, Equatable, Codable, Sendable {
     case userDefined
     case blankBase
 }
 
-// `TaskItem` represents a task inside an actual day plan block.
-// Completion state belongs here because it is day-specific, not template-specific.
+// `TaskItem` 是“某一天里的真实任务实例”。
+// 它和模板里的 blueprint 不同：这里可以记录完成状态、完成时间。
 public struct TaskItem: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var title: String
@@ -249,8 +265,8 @@ public struct TaskItem: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
-// `TaskBlueprint` is the template counterpart of `TaskItem`.
-// It describes tasks before they are instantiated into a real day.
+// `TaskBlueprint` 是模板阶段的任务定义。
+// 一旦模板被实例化成某天的 DayPlan，blueprint 才会变成真实 `TaskItem`。
 public struct TaskBlueprint: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var title: String

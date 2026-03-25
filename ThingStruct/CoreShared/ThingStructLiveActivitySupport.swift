@@ -2,6 +2,9 @@
 import ActivityKit
 import Foundation
 
+// Live Activity 的“属性”和“内容状态”需要是独立的可编码类型，
+// 因为它们会被系统拿去在锁屏、Dynamic Island 等系统 UI 中展示。
+// 这里和普通 SwiftUI View State 不同，它更像一个跨进程展示载荷。
 @available(iOS 16.1, *)
 struct ThingStructCurrentBlockActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
@@ -22,12 +25,19 @@ struct ThingStructCurrentBlockActivityAttributes: ActivityAttributes {
     var currentBlockID: String
 }
 
+// 这个控制器统一管理当前 block 的 Live Activity 生命周期。
+// 责任包括：
+// - 根据 repository 生成快照
+// - 决定应该启动、更新还是结束 activity
+// - 保证同一时刻不会残留多份重复 activity
 @available(iOS 16.1, *)
 enum ThingStructCurrentBlockLiveActivityController {
     static func start(
         using repository: ThingStructDocumentRepository = .appLive,
         at date: Date = .now
     ) async throws -> Bool {
+        // 当前实现把“start”统一复用成一次 `sync`：
+        // 有活动就更新，没有就新建，不该显示时就结束。
         try await sync(using: repository, at: date)
     }
 
@@ -35,6 +45,7 @@ enum ThingStructCurrentBlockLiveActivityController {
         using repository: ThingStructDocumentRepository = .appLive,
         at date: Date = .now
     ) async throws -> Bool {
+        // 如果系统层面禁用了 Live Activity，就立即清理所有现有 activity。
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             await endAll()
             return false
@@ -42,10 +53,12 @@ enum ThingStructCurrentBlockLiveActivityController {
 
         let snapshot = try repository.liveActivitySnapshot(at: date)
         guard let payload = payload(from: snapshot, referenceDate: date) else {
+            // 没有可展示的当前 block 时，结束 activity 比保留旧内容更安全。
             await endAll()
             return false
         }
 
+        // 如果已经存在同一个日期、同一个 block 的 activity，就原地更新。
         if let existing = Activity<ThingStructCurrentBlockActivityAttributes>.activities.first(
             where: {
                 $0.attributes.currentBlockID == payload.attributes.currentBlockID &&
@@ -57,6 +70,7 @@ enum ThingStructCurrentBlockLiveActivityController {
             return true
         }
 
+        // 否则先清空旧 activity，再请求创建新的。
         await endAll()
         _ = try Activity.request(
             attributes: payload.attributes,
@@ -71,6 +85,7 @@ enum ThingStructCurrentBlockLiveActivityController {
     }
 
     static func endAll(excluding activityID: String?) async {
+        // `Activity.activities` 给出当前 app 仍活着的所有 activity 实例。
         for activity in Activity<ThingStructCurrentBlockActivityAttributes>.activities
         where activity.id != activityID {
             await activity.end(nil, dismissalPolicy: .immediate)
@@ -81,6 +96,7 @@ enum ThingStructCurrentBlockLiveActivityController {
         from snapshot: ThingStructSystemLiveActivitySnapshot,
         referenceDate: Date
     ) -> Payload? {
+        // 只有在“存在非空白当前块，且还没结束，且能构造跳转 URL”时才值得展示。
         guard
             let currentBlock = snapshot.currentBlock,
             !currentBlock.isBlank,
@@ -90,6 +106,7 @@ enum ThingStructCurrentBlockLiveActivityController {
             return nil
         }
 
+        // `staleDate` 告诉系统：这份内容在什么时候之后应该被视为过期。
         let staleDate = currentBlock.date.date(minuteOfDay: currentBlock.endMinuteOfDay) ?? referenceDate.addingTimeInterval(15 * 60)
         let attributes = ThingStructCurrentBlockActivityAttributes(
             dateISO: currentBlock.date.description,
@@ -118,6 +135,7 @@ enum ThingStructCurrentBlockLiveActivityController {
 
 @available(iOS 16.1, *)
 private struct Payload {
+    // 只是一个内部打包结构，避免函数返回超长元组。
     let attributes: ThingStructCurrentBlockActivityAttributes
     let content: ActivityContent<ThingStructCurrentBlockActivityAttributes.ContentState>
 }

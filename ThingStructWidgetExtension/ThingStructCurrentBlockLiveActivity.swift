@@ -3,6 +3,11 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
+// 这是 Live Activity 的 UI 定义文件。
+// 和普通 Widget 的最大区别是：
+// - 数据来源是 `ActivityAttributes + ContentState`
+// - 展示位置包括锁屏和 Dynamic Island
+// - 内容会随着 activity state 更新而变化
 @available(iOS 16.1, *)
 struct ThingStructCurrentBlockLiveActivity: Widget {
     private var themeTint: Color {
@@ -10,6 +15,7 @@ struct ThingStructCurrentBlockLiveActivity: Widget {
     }
 
     var body: some WidgetConfiguration {
+        // `ActivityConfiguration` 相当于 Live Activity 世界里的根配置入口。
         ActivityConfiguration(for: ThingStructCurrentBlockActivityAttributes.self) { context in
             ThingStructLiveActivityLockScreenView(context: context)
                 .widgetURL(context.tapURL)
@@ -18,6 +24,7 @@ struct ThingStructCurrentBlockLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
+                    // Dynamic Island 展开态的左上角区域。
                     Text(context.state.title)
                         .font(.headline)
                         .lineLimit(1)
@@ -32,6 +39,7 @@ struct ThingStructCurrentBlockLiveActivity: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
+                    // 展开态底部放更详细的信息和动作按钮。
                     ThingStructLiveActivityExpandedContent(context: context)
                         .padding(.horizontal, 8)
                         .padding(.top, 4)
@@ -62,6 +70,7 @@ private struct ThingStructLiveActivitySummaryBadge: View {
     }
 
     var body: some View {
+        // 这是一个纯展示用的小徽章，不带业务逻辑。
         HStack(spacing: 4) {
             Image(systemName: state.compactIconName)
                 .imageScale(.small)
@@ -82,6 +91,7 @@ private struct ThingStructLiveActivityLockScreenView: View {
     let context: ActivityViewContext<ThingStructCurrentBlockActivityAttributes>
 
     var body: some View {
+        // 锁屏态比 Dynamic Island 空间更大，所以排版更舒展。
         VStack(alignment: .leading, spacing: 12) {
             Text(context.state.title)
                 .font(.title2.weight(.semibold))
@@ -125,6 +135,7 @@ private struct ThingStructLiveActivityExpandedContent: View {
     let context: ActivityViewContext<ThingStructCurrentBlockActivityAttributes>
 
     var body: some View {
+        // 这是 Dynamic Island 展开态底部内容。
         VStack(alignment: .leading, spacing: 8) {
             Text(context.state.timeRangeText)
                 .font(.caption)
@@ -157,6 +168,7 @@ private struct ThingStructLiveActivityDetailContent: View {
     }
 
     var body: some View {
+        // 细节区会按“来源块 -> note -> 当前任务/完成状态”的顺序显示。
         VStack(alignment: .leading, spacing: 10) {
             if let displaySourceBlockTitle = state.displaySourceBlockTitle {
                 Label("From \(displaySourceBlockTitle)", systemImage: "arrow.turn.down.right")
@@ -179,6 +191,7 @@ private struct ThingStructLiveActivityDetailContent: View {
     }
 
     private func noteRow(_ text: String) -> some View {
+        // note 行只是一个小型复合视图，抽成私有 helper 让主体更易读。
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "note.text")
                 .font(metaFont.weight(.semibold))
@@ -199,6 +212,7 @@ private struct ThingStructLiveActivityDetailContent: View {
         title: String,
         intent: CompleteLiveActivityTaskIntent
     ) -> some View {
+        // Live Activity 按钮同样通过 intent 触发，而不是直接持有 store/repository。
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Label("Current task", systemImage: "checklist")
@@ -231,6 +245,7 @@ private struct ThingStructLiveActivityDetailContent: View {
     }
 
     private var completionState: some View {
+        // 没有可直接操作的任务时，显示一个只读状态区。
         VStack(alignment: .leading, spacing: 4) {
             Label(completionTitle, systemImage: completionIconName)
                 .font(taskFont.weight(.semibold))
@@ -259,6 +274,7 @@ private struct ThingStructLiveActivityDetailContent: View {
 @available(iOS 16.1, *)
 private extension ActivityViewContext<ThingStructCurrentBlockActivityAttributes> {
     var tapURL: URL? {
+        // activity 点击跳回 app 时，系统只知道这里提供的 URL。
         URL(string: state.tapURL)
     }
 }
@@ -270,6 +286,7 @@ private extension ThingStructCurrentBlockActivityAttributes.ContentState {
     }
 
     var actionableTaskIntent: CompleteLiveActivityTaskIntent? {
+        // 只有在 state 里携带了完整的日期/block/task 标识时，才生成可执行 intent。
         guard
             let actionableTaskDateISO,
             let actionableTaskBlockID,
@@ -286,6 +303,7 @@ private extension ThingStructCurrentBlockActivityAttributes.ContentState {
     }
 
     var compactIconName: String {
+        // 紧凑态图标根据是否有任务可操作、是否已全部完成来变化。
         if hasActionableTask {
             return "checkmark.circle"
         }
@@ -329,6 +347,8 @@ private extension ThingStructCurrentBlockActivityAttributes.ContentState {
         displaySourceBlockTitle: String?,
         statusMessage: String?
     ) -> Self {
+        // 预览数据和正式 activity 使用同一个 ContentState 结构，
+        // 这能让预览更接近真实运行效果。
         let taskBlockID = UUID().uuidString
         let taskID = UUID().uuidString
 
@@ -388,6 +408,11 @@ private extension ThingStructCurrentBlockActivityAttributes.ContentState {
     )
 }
 
+// 这些预览覆盖了几类关键状态：
+// - 顶层 block 有可完成任务
+// - 任务来源回退到下层/上层块
+// - 全部完成
+// - 长文本挤压
 #Preview("Live Activity Top Layer", as: .content, using: liveActivityPreviewAttributes) {
     ThingStructCurrentBlockLiveActivity()
 } contentStates: {

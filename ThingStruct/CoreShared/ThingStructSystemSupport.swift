@@ -1,5 +1,12 @@
 import Foundation
 
+// 这些 `ThingStructSystem*` 类型是“系统表面专用的中间结果”：
+// 它们不直接等于业务模型，也不直接等于 SwiftUI 页面模型。
+// 它们的存在是为了服务：
+// - widget
+// - live activity
+// - shortcut / control / notification 动作
+// 这些入口往往只需要“当前 block / 当前任务 / 跳转 URL”等有限信息。
 struct ThingStructSystemTaskReference: Equatable, Sendable {
     let date: LocalDay
     let blockID: UUID
@@ -45,10 +52,13 @@ struct ThingStructSystemLiveActivitySnapshot: Equatable, Sendable {
     let statusMessage: String?
 
     func tapURL(source: ThingStructSystemSource = .liveActivity) -> URL? {
+        // Live Activity 整体点击时，默认跳回 Now 页面。
         ThingStructSystemRoute.now(source: source).url
     }
 
     func deepLinkURL(source: ThingStructSystemSource = .liveActivity) -> URL? {
+        // 更细粒度的 deep link 优先级：
+        // 任务 > 展示 block > 当前 block > Now
         if let displayTask {
             return ThingStructSystemRoute.today(
                 date: displayTask.date,
@@ -80,6 +90,8 @@ struct ThingStructSystemLiveActivitySnapshot: Equatable, Sendable {
     }
 }
 
+// `ThingStructSystemActionExecutor` 是系统入口层的小门面(facade)。
+// AppIntent / 快捷操作 / widget control 不直接碰 document，而是通过它拿结果。
 struct ThingStructSystemActionExecutor {
     let repository: ThingStructDocumentRepository
 
@@ -92,6 +104,7 @@ struct ThingStructSystemActionExecutor {
     }
 
     func openURL(for route: ThingStructSystemRoute) -> URL? {
+        // 这个方法很薄，但保留它能让调用方只依赖 executor，而不必关心 route 自身实现。
         route.url
     }
 
@@ -99,6 +112,7 @@ struct ThingStructSystemActionExecutor {
         at date: Date = .now,
         source: ThingStructSystemSource? = nil
     ) throws -> URL? {
+        // 先问 repository“当前 block 是谁”，再生成 today deep link。
         guard let block = try repository.currentBlockReference(at: date) else {
             return nil
         }
@@ -118,6 +132,10 @@ struct ThingStructSystemActionExecutor {
 }
 
 extension ThingStructDocumentRepository {
+    // 这里的 extension 很值得注意：
+    // repository 仍然只负责“文档层”的读写，但系统层额外给它扩展了
+    // “如何从文档推导系统 snapshot / 完成当前任务”这类能力。
+    // 也就是说：存储对象本身不懂 UI，但系统支持层可以基于它做高层操作。
     @discardableResult
     func toggleTask(
         on date: LocalDay,
@@ -125,6 +143,11 @@ extension ThingStructDocumentRepository {
         taskID: UUID,
         completedAt: Date = .now
     ) throws -> Bool {
+        // 对 widget 而言，“切任务”意味着：
+        // 1. 读最新 document
+        // 2. 确保当天 plan 已 materialize
+        // 3. 找到对应 task
+        // 4. 翻转完成状态并写回
         guard try load() != nil else {
             return false
         }
@@ -164,6 +187,9 @@ extension ThingStructDocumentRepository {
         taskID: UUID,
         completedAt: Date = .now
     ) throws -> Bool {
+        // `completeTask` 和 `toggleTask` 的区别是：
+        // - toggle 会翻转 true/false
+        // - complete 只允许从 false -> true
         guard try load() != nil else {
             return false
         }
@@ -189,6 +215,8 @@ extension ThingStructDocumentRepository {
         completedAt: Date = .now,
         in document: inout ThingStructDocument
     ) throws -> Bool {
+        // 这个重载允许对“调用者已经持有的 document”就地修改，
+        // 测试里会很常用，因为它避免真实文件 I/O。
         let prepared = try materializedDocument(
             from: document,
             for: date,
@@ -217,11 +245,15 @@ extension ThingStructDocumentRepository {
     }
 
     func systemNowSnapshot(at date: Date) throws -> ThingStructSystemNowSnapshot {
+        // 先把 document 映射成 `NowScreenModel`，再映射成系统快照。
+        // 这说明系统表面和页面其实共用了同一份“当前链路”理解。
         let now = try preparedNowScreenModel(at: date)
         return systemNowSnapshot(from: now)
     }
 
     func systemNowSnapshot(from now: NowScreenModel) -> ThingStructSystemNowSnapshot {
+        // 这里把页面模型压缩成系统更关心的最小集合：
+        // 当前 block、可见 block 链、顶部任务、剩余任务数。
         let activeBlocks = blockReferences(from: now)
 
         let topTask = prioritizedTaskReference(from: now)
@@ -244,6 +276,8 @@ extension ThingStructDocumentRepository {
     }
 
     func liveActivitySnapshot(from now: NowScreenModel) -> ThingStructSystemLiveActivitySnapshot {
+        // Live Activity 的展示规则和页面不同：
+        // 它会在上层任务做完时向下回退到更低层 block/task/note。
         let activeBlocks = blockReferences(from: now)
         let blocksByID = Dictionary(uniqueKeysWithValues: activeBlocks.map { ($0.blockID, $0) })
         let remainingTaskCount = remainingTaskCount(from: now)
@@ -297,6 +331,8 @@ extension ThingStructDocumentRepository {
         at date: Date,
         completedAt: Date = .now
     ) throws -> ThingStructSystemTaskReference? {
+        // “完成当前任务”本质上是：
+        // 先定位 topTask，再调用通用 completeTask。
         guard let task = try topTaskReference(at: date) else {
             return nil
         }
@@ -315,6 +351,7 @@ extension ThingStructDocumentRepository {
         on date: LocalDay,
         in blockID: UUID
     ) throws -> ThingStructSystemTaskReference? {
+        // 这个版本用于通知/特定 block 操作，优先在指定 block 内找第一条未完成任务。
         let generatedAt = date.date() ?? .now
         let document = try preparedDocument(at: generatedAt)
 
@@ -361,6 +398,7 @@ extension ThingStructDocumentRepository {
     }
 
     func preparedNowScreenModel(at date: Date) throws -> NowScreenModel {
+        // “prepared” 的含义是：不仅加载 document，还会按需要自动 materialize 当天计划。
         let localDay = LocalDay(date: date)
         let document = try preparedDocument(at: date)
         return try ThingStructPresentation.nowScreenModel(
@@ -371,6 +409,8 @@ extension ThingStructDocumentRepository {
     }
 
     func preparedDocument(at date: Date) throws -> ThingStructDocument {
+        // 对系统入口来说，“今天的计划应该随用随准备好”，
+        // 所以这里即便从空 document 开始，也会尝试推导当天计划。
         let localDay = LocalDay(date: date)
 
         guard try load() != nil else {
@@ -399,6 +439,8 @@ extension ThingStructDocumentRepository {
         for date: LocalDay,
         generatedAt: Date
     ) throws -> (document: ThingStructDocument, didMaterialize: Bool) {
+        // 如果已有当天 plan，则直接返回原 document；
+        // 否则按模板规则生成并插入。
         guard document.dayPlan(for: date) == nil else {
             return (document, false)
         }

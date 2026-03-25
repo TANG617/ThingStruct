@@ -1,33 +1,42 @@
 import Foundation
 import CryptoKit
 
-// `DayPlanEngine` owns the rules for validating and resolving a day plan.
+// `DayPlanEngine` 是项目里最核心、也最“算法化”的业务规则引擎。
+// 如果用 C++ 的视角理解，它很像一个纯函数式的“时间块树规则解释器”：
+// - 输入：一个 `DayPlan`
+// - 输出：校验后的、带解析结果的 `DayPlan`，或一个明确的业务错误
 //
-// This is the most algorithm-heavy file in the project.
-// A good C++ analogy is "the deterministic rules engine over a graph/tree of blocks".
+// 这个文件主要负责：
+// - 验证结构是否合法：父子关系、层级、循环引用、时间范围
+// - 把相对时间块解析成绝对分钟区间
+// - 生成运行时空白块，让 UI 能把一天渲染成连续时间线
+// - 计算某一时刻的 active chain
+// - 提供安全编辑能力：取消 block、调整起止时间
 //
-// Responsibilities include:
-// - validating structure (parents, layers, cycles)
-// - resolving absolute time ranges for relative overlays
-// - generating runtime blank blocks
-// - computing active selection
-// - enforcing safe edits such as cancel / resize
+// 一个很重要的阅读原则：
+// 这里尽量保持“纯业务规则”，不涉及 SwiftUI、Widget、通知等系统表面。
 public enum DayPlanEngine {
+    // MARK: - Public Entry Points
+
     public static func validate(_ plan: DayPlan) throws {
-        // Validation is defined in terms of successful resolution.
+        // 这里没有单独写一套“只校验不解析”的逻辑，
+        // 而是直接复用 `resolved(_:)`。
+        // 原因很直接：只要一个 plan 能被完整解析，就说明它满足结构和时间规则。
         _ = try resolved(plan)
     }
 
     public static func resolved(_ plan: DayPlan) throws -> DayPlan {
-        // Runtime-only blank blocks are never part of the persisted truth.
-        // We strip them before running structural validation/resolution.
+        // 第一步先剥掉运行时空白块。
+        // 这些 block 只是 UI 为了补齐时间线临时生成的，不是用户真正保存的数据。
         let persistedPlan = strippedRuntimeBlocks(from: plan)
+        // 第二步解析出每个 block 的绝对时间范围。
         let resolvedRanges = try resolveRanges(in: persistedPlan)
 
         var resolvedPlan = persistedPlan
         resolvedPlan.blocks = persistedPlan.blocks.map { block in
             var updatedBlock = block
-            // The engine computes and stores resolved start/end on each block for convenience.
+            // 解析出的 start/end 会直接回写到 block 上，方便后续展示层和编辑逻辑使用。
+            // 注意：这仍然是“计算结果”，不是用户手工输入的原始字段。
             if let range = resolvedRanges[block.id] {
                 updatedBlock.resolvedStartMinuteOfDay = range.start
                 updatedBlock.resolvedEndMinuteOfDay = range.end
@@ -42,9 +51,9 @@ public enum DayPlanEngine {
     }
 
     public static func runtimeResolved(_ plan: DayPlan) throws -> DayPlan {
-        // Blank base blocks are synthesized only for runtime presentation.
-        // They fill gaps between user blocks so the timeline and active-selection logic
-        // can treat the whole day as covered.
+        // `runtimeResolved` 比 `resolved` 更进一步：
+        // 它会把用户没定义的时间空档补成“空白基础块”。
+        // 这样时间线 UI 和 active selection 逻辑就能把 0:00~24:00 看成连续覆盖。
         let resolvedPlan = try resolved(plan)
         var runtimePlan = resolvedPlan
         runtimePlan.blocks.append(contentsOf: makeBlankBaseBlocks(in: resolvedPlan))
@@ -52,9 +61,12 @@ public enum DayPlanEngine {
     }
 
     public static func cancelBlock(_ blockID: UUID, in plan: DayPlan) throws -> DayPlan {
-        // "Cancel" does more than flipping a flag:
-        // direct children get hoisted up one level, descendants shift layers,
-        // and the final result must preserve legal time ranges.
+        // “取消 block”不是单纯把 `isCancelled` 设成 true。
+        // 因为这个 block 可能有子块，所以还要做一连串结构修复：
+        // - 目标块自己标记为 cancelled
+        // - 直接子块提升一层，并改写成绝对时间
+        // - 更深层后代统一下移 layer
+        // - 最终还要验证这些变化不会制造重叠或改变无关 block 的解析区间
         let resolvedPlan = try resolved(plan)
         guard let target = resolvedPlan.blocks.first(where: { $0.id == blockID }) else {
             throw ThingStructCoreError.missingBlock(blockID)
@@ -69,6 +81,7 @@ public enum DayPlanEngine {
         let childrenByParent = buildChildrenMap(from: activeBlocks)
         let directChildren = Set(childrenByParent[blockID] ?? [])
         let descendantIDs = collectDescendants(startingAt: blockID, childrenByParent: childrenByParent)
+        // 记录取消前的解析区间，后面用来做回归式验证。
         let originalRanges = try resolvedRangeMap(from: activeBlocks)
 
         var updatedPlan = resolvedPlan
@@ -95,6 +108,8 @@ public enum DayPlanEngine {
                     throw ThingStructCoreError.invalidResolvedRange(blockID: currentID, start: -1, end: -1)
                 }
 
+                // 直接子块原来是“相对目标块”的，现在目标块取消了，
+                // 所以要把它改造成对上一层父块直接成立的绝对块。
                 updatedPlan.blocks[index].parentBlockID = target.parentBlockID
                 updatedPlan.blocks[index].layerIndex -= 1
                 updatedPlan.blocks[index].timing = .absolute(
@@ -107,12 +122,14 @@ public enum DayPlanEngine {
             }
 
             if descendantIDs.contains(currentID) {
+                // 更深层后代不改 timing，只修正它们的层级。
                 updatedPlan.blocks[index].layerIndex -= 1
                 updatedPlan.blocks[index].resolvedStartMinuteOfDay = nil
                 updatedPlan.blocks[index].resolvedEndMinuteOfDay = nil
             }
         }
 
+        // 取消后先做一次风险检查，再重新解析，最后验证不相关 block 的区间没有漂移。
         try validateCancelOverlapRisk(in: updatedPlan, originalRanges: originalRanges)
 
         let reparsedPlan = try resolved(updatedPlan)
@@ -121,8 +138,9 @@ public enum DayPlanEngine {
     }
 
     public static func resizeBounds(for blockID: UUID, in plan: DayPlan) throws -> BlockResizeBounds {
-        // The UI asks this function "what start/end range is legal before I even drag?"
-        // Returning bounds keeps gesture code simple and keeps rules centralized.
+        // 这个函数给 UI 提供“合法拖拽边界”。
+        // 设计思想是：把复杂约束都放在业务层算好，界面层只消费结果。
+        // 这样手势代码不会散落一堆 if/else，也更容易测试。
         let resolvedPlan = try resolved(plan)
         let activeBlocks = resolvedPlan.blocks.filter { !$0.isCancelled }
 
@@ -144,6 +162,7 @@ public enum DayPlanEngine {
                     return nil
                 }
 
+                // 只关心当前 block 右侧最近的兄弟块。
                 return siblingStart > resolvedStart ? siblingStart : nil
             }
             .min()
@@ -164,6 +183,7 @@ public enum DayPlanEngine {
 
         let childrenByParent = buildChildrenMap(from: activeBlocks)
         let descendantIDs = collectDescendants(startingAt: blockID, childrenByParent: childrenByParent)
+        // 一个 block 的结束时间不能早于任何后代块的结束时间，否则树结构会被截断。
         let deepestDescendantEnd = activeBlocks
             .filter { descendantIDs.contains($0.id) }
             .compactMap(\.resolvedEndMinuteOfDay)
@@ -185,6 +205,7 @@ public enum DayPlanEngine {
 
         let rawMinimumEnd = max(resolvedStart + 5, deepestDescendantEnd)
         let rawMaximumEnd = min(parentEnd, nextSiblingStart ?? parentEnd)
+        // 业务里统一按 5 分钟粒度对齐，减少拖拽时的碎片值。
         let minimumEnd = rawMinimumEnd.roundedUp(toStep: 5)
         let maximumEnd = rawMaximumEnd.roundedDown(toStep: 5)
 
@@ -217,8 +238,9 @@ public enum DayPlanEngine {
 
         let validStartCandidates = Array(stride(from: minimumStart, through: maximumStart, by: 5))
             .filter { candidate in
-                // Some starts are numerically in range but still illegal because they would
-                // invalidate descendant overlays. We filter those out here.
+                // 这里很关键：
+                // 有些 start 虽然数值落在区间里，但会破坏子孙 overlay 的解析合法性，
+                // 所以还要用引擎再模拟验证一遍。
                 (try? candidateStartPreservesResolvedEnd(
                     candidate,
                     for: target,
@@ -246,8 +268,9 @@ public enum DayPlanEngine {
         in plan: DayPlan,
         proposedStartMinuteOfDay: Int
     ) throws -> DayPlan {
-        // Editing operations return a brand-new `DayPlan` value.
-        // This keeps the engine functional and easy to test.
+        // 编辑操作返回一个全新的 `DayPlan` 值，而不是原地修改共享对象。
+        // 这和 C++ 里偏函数式/不可变数据的思路类似：
+        // 规则更容易推理，也更适合做回归测试。
         let bounds = try resizeBounds(for: blockID, in: plan)
         let alignedStart = proposedStartMinuteOfDay.aligned(
             toStep: 5,
@@ -282,6 +305,9 @@ public enum DayPlanEngine {
         in plan: DayPlan,
         proposedEndMinuteOfDay: Int
     ) throws -> DayPlan {
+        // 调整结束时间和调整开始时间的区别在于：
+        // - 绝对块：直接改 requested end
+        // - 相对块：要改的是相对时长 requested duration
         let bounds = try resizeBounds(for: blockID, in: plan)
         let alignedEnd = proposedEndMinuteOfDay.aligned(
             toStep: 5,
@@ -314,6 +340,7 @@ public enum DayPlanEngine {
     }
 
     public static func activeSelection(in plan: DayPlan, at minuteOfDay: Int) throws -> ActiveSelection {
+        // 先做 runtime resolve，这样即使当前时刻落在“空白时间”里，也能选中一个空白 base block。
         let runtimePlan = try runtimeResolved(plan)
         let activeBlocks = runtimePlan.blocks
             .filter { !$0.isCancelled }
@@ -328,8 +355,7 @@ public enum DayPlanEngine {
                 return start <= minuteOfDay && minuteOfDay < end
             }
             .sorted { lhs, rhs in
-                // Sorting outermost-to-innermost lets the resulting array behave like
-                // a chain from base block to deepest overlay.
+                // 从最外层排到最内层，这样最终结果天然就是一条 active chain。
                 if lhs.layerIndex != rhs.layerIndex {
                     return lhs.layerIndex < rhs.layerIndex
                 }
@@ -344,6 +370,7 @@ public enum DayPlanEngine {
             throw ThingStructCoreError.activeBlocksDoNotFormUniqueChain(atMinuteOfDay: minuteOfDay)
         }
 
+        // 活跃块必须形成一条严格的父子链，否则说明数据结构已经不自洽。
         for index in activeBlocks.indices.dropFirst() {
             let child = activeBlocks[index]
             let parent = activeBlocks[index - 1]
@@ -354,11 +381,14 @@ public enum DayPlanEngine {
         }
 
         let taskSource = activeBlocks.reversed().first { $0.hasIncompleteTasks }
+        // 任务来源取最内层、仍有未完成任务的块；这是“上层 overlay 优先”的体现。
         return ActiveSelection(chain: activeBlocks, taskSourceBlock: taskSource)
     }
 
+    // MARK: - Resolution
+
     private static func strippedRuntimeBlocks(from plan: DayPlan) -> DayPlan {
-        // Runtime blank blocks are presentation artifacts, not durable business data.
+        // 运行时空白块只是展示工件，不应该再次参与解析或被持久化。
         var sanitized = plan
         sanitized.blocks = plan.blocks.filter { !$0.isBlankBaseBlock }
         return sanitized
@@ -368,8 +398,8 @@ public enum DayPlanEngine {
         var allBlocksByID: [UUID: TimeBlock] = [:]
 
         for block in plan.blocks {
-            // Many later steps rely on dictionary lookups by ID, so duplicate IDs would
-            // make the whole structure ambiguous.
+            // 后续很多算法都要通过 ID 做字典查找。
+            // 一旦 ID 重复，树结构就会变得语义不唯一，所以这里必须尽早报错。
             if allBlocksByID.updateValue(block, forKey: block.id) != nil {
                 throw ThingStructCoreError.duplicateBlockID(block.id)
             }
@@ -380,8 +410,8 @@ public enum DayPlanEngine {
         var childrenByParent: [UUID?: [UUID]] = [:]
 
         for block in activeBlocks {
-            // The persisted model is a flat array, so we enforce the tree invariant here:
-            // root blocks have no parent, overlays must have a parent.
+            // 注意：持久化形态是“扁平数组”，不是嵌套树。
+            // 所以树结构约束要靠引擎主动检查，而不是靠 JSON 结构天然保证。
             if block.layerIndex == 0, block.parentBlockID != nil {
                 throw ThingStructCoreError.invalidRootBlock(block.id)
             }
@@ -401,7 +431,7 @@ public enum DayPlanEngine {
 
         for block in activeBlocks {
             if block.layerIndex == 0 {
-                // A base block anchors the day on the absolute clock.
+                // 基础块必须直接锚定在绝对时间轴上。
                 if case .relative = block.timing {
                     throw ThingStructCoreError.baseBlockMustUseAbsoluteTiming(block.id)
                 }
@@ -419,6 +449,7 @@ public enum DayPlanEngine {
 
         var resolvedRanges: [UUID: (start: Int, end: Int)] = [:]
 
+        // 从根节点（`parentID == nil`）开始递归解析整棵块树。
         try resolveChildren(
             of: nil,
             in: activeBlocksByID,
@@ -433,8 +464,8 @@ public enum DayPlanEngine {
         in activeBlocks: [TimeBlock],
         activeBlocksByID: [UUID: TimeBlock]
     ) throws {
-        // Because each block has at most one parent, cycle detection can be implemented
-        // as a simple repeated walk up the ancestor chain.
+        // 由于每个 block 最多只有一个父节点，
+        // 检测环不需要通用图算法，沿着 parent 指针一路向上走就够了。
         for block in activeBlocks {
             var visited: Set<UUID> = [block.id]
             var currentParentID = block.parentBlockID
@@ -455,8 +486,12 @@ public enum DayPlanEngine {
         childrenByParent: [UUID?: [UUID]],
         resolvedRanges: inout [UUID: (start: Int, end: Int)]
     ) throws {
-        // Recursive resolution works one sibling group at a time:
-        // calculate starts, clamp ends, store results, then recurse into each child subtree.
+        // 递归解析的单位不是“一个节点”，而是“同一父节点下的一组兄弟节点”。
+        // 流程大致是：
+        // 1. 先算出每个兄弟的理论开始时间
+        // 2. 再结合父范围、下一个兄弟的开始、自己请求的结束，夹出真实结束时间
+        // 3. 把结果写进 resolvedRanges
+        // 4. 然后递归处理每个兄弟的子树
         let childIDs = childrenByParent[parentID] ?? []
         if childIDs.isEmpty {
             return
@@ -480,8 +515,8 @@ public enum DayPlanEngine {
             return try initialSiblingState(for: block, parentID: parentID, parentRange: parentRange)
         }
         .sorted { lhs, rhs in
-            // Stable sibling ordering matters because the next sibling's start can cap
-            // the current sibling's resolved end.
+            // 兄弟节点的稳定排序非常重要，
+            // 因为“下一个兄弟的 start”会限制当前兄弟的 resolved end。
             if lhs.start != rhs.start {
                 return lhs.start < rhs.start
             }
@@ -492,6 +527,10 @@ public enum DayPlanEngine {
             let sibling = siblings[index]
             let nextStart = siblings[safe: index + 1]?.start
 
+            // 结束时间的上界来自三方面：
+            // - 父块结束
+            // - 下一个兄弟的开始
+            // - 自己声明的 requested end/duration
             var upperBounds: [Int] = []
             if let parentRange {
                 upperBounds.append(parentRange.end)
@@ -509,7 +548,7 @@ public enum DayPlanEngine {
             let resolvedStart = sibling.start
 
             if let parentRange {
-                // A child must resolve entirely inside its parent's already-resolved range.
+                // 子块必须完整落在父块区间内部。
                 if resolvedStart < parentRange.start || resolvedStart >= parentRange.end {
                     throw ThingStructCoreError.blockOutsideParent(
                         blockID: sibling.block.id,
@@ -544,8 +583,10 @@ public enum DayPlanEngine {
         parentID: UUID?,
         parentRange: (start: Int, end: Int)?
     ) throws -> ResolvedSibling {
-        // Normalize the two timing modes into one common intermediate representation
-        // that the sibling resolver can reason about uniformly.
+        // 这一步把两种 timing 统一归一成同一种中间表示：
+        // - `start`
+        // - `requestedEnd`
+        // 这样后面的 sibling resolver 就不用分情况处理 absolute/relative 了。
         switch block.timing {
         case let .absolute(startMinuteOfDay, requestedEndMinuteOfDay):
             guard (0 ..< 24 * 60).contains(startMinuteOfDay) else {
@@ -584,15 +625,20 @@ public enum DayPlanEngine {
                 )
             }
 
+            // 相对块的 start = 父块起点 + offset；
+            // 若给了 duration，则 requested end = start + duration。
             let start = parentRange.start + startOffsetMinutes
             let requestedEnd = requestedDurationMinutes.map { start + $0 }
             return ResolvedSibling(block: block, start: start, requestedEnd: requestedEnd)
         }
     }
 
+    // MARK: - Runtime Blank Blocks
+
     private static func makeBlankBaseBlocks(in plan: DayPlan) -> [TimeBlock] {
-        // Blank base blocks explicitly represent gaps between real base blocks so UI code
-        // can render and select open time just like any other interval.
+        // 这里生成的是“运行时空白基础块”。
+        // 它们的作用不是存档，而是把真实基础块之间的空档显式表达出来，
+        // 这样 UI 可以像渲染普通块一样渲染空白时间。
         let resolvedBaseBlocks = plan.blocks
             .filter { !$0.isCancelled && $0.layerIndex == 0 }
             .sorted { lhs, rhs in
@@ -634,6 +680,7 @@ public enum DayPlanEngine {
     }
 
     private static func blankBaseBlock(in plan: DayPlan, start: Int, end: Int) -> TimeBlock {
+        // `kind: .blankBase` 是识别这类运行时块的关键标记。
         TimeBlock(
             id: blankBaseBlockID(in: plan, start: start, end: end),
             dayPlanID: plan.id,
@@ -648,6 +695,8 @@ public enum DayPlanEngine {
     }
 
     private static func blankBaseBlockID(in plan: DayPlan, start: Int, end: Int) -> UUID {
+        // 空白块 ID 不是随机生成，而是基于 plan + 区间稳定生成。
+        // 这样同一个空白区间在反复解析时会得到同一个 ID，UI diff 会更稳定。
         let seed = "\(plan.id.uuidString)|\(start)|\(end)"
         var bytes = Array(SHA256.hash(data: Data(seed.utf8)).prefix(16))
         bytes[6] = (bytes[6] & 0x0F) | 0x50
@@ -662,8 +711,7 @@ public enum DayPlanEngine {
     }
 
     private static func resolvedRangeMap(from blocks: [TimeBlock]) throws -> [UUID: (start: Int, end: Int)] {
-        // Capture a before-snapshot so we can prove unrelated blocks keep their intervals
-        // after structural edits like cancel.
+        // 记录“编辑前”的解析区间快照，供结构性编辑后的回归检查使用。
         var ranges: [UUID: (start: Int, end: Int)] = [:]
 
         for block in blocks where !block.isCancelled {
@@ -684,8 +732,8 @@ public enum DayPlanEngine {
         in plan: DayPlan,
         originalRanges: [UUID: (start: Int, end: Int)]
     ) throws {
-        // Hoisting children after cancel can create new siblings. We check those groups
-        // against the original ranges before accepting the edit.
+        // 取消一个块以后，原来的子块可能被提升成新的兄弟节点。
+        // 这里用“取消前”的区间来检查：这些新兄弟是否会彼此穿插重叠。
         let survivingBlocks = plan.blocks.filter { !$0.isCancelled }
         let groupedBlocks = Dictionary(grouping: survivingBlocks) { block in
             ParentLayerKey(parentID: block.parentBlockID, layerIndex: block.layerIndex)
@@ -729,7 +777,7 @@ public enum DayPlanEngine {
         against originalRanges: [UUID: (start: Int, end: Int)],
         excluding excludedIDs: Set<UUID>
     ) throws {
-        // Except for the cancelled subtree itself, cancel should not move anyone else.
+        // 除了被取消的那棵子树，其他 block 的 resolved range 不应该被悄悄改动。
         for block in plan.blocks where !block.isCancelled && !excludedIDs.contains(block.id) {
             guard let expectedRange = originalRanges[block.id] else {
                 continue
@@ -755,7 +803,7 @@ public enum DayPlanEngine {
     }
 
     private static func buildChildrenMap(from blocks: [TimeBlock]) -> [UUID: [UUID]] {
-        // Repeated graph algorithms are simpler against a parent->children index.
+        // 多次做图遍历时，先构建 parent -> children 索引会简单很多。
         var childrenByParent: [UUID: [UUID]] = [:]
 
         for block in blocks where !block.isCancelled {
@@ -768,7 +816,7 @@ public enum DayPlanEngine {
     }
 
     private static func parentStart(for block: TimeBlock, in activeBlocks: [TimeBlock]) -> Int {
-        // Root blocks resolve against midnight, so their implicit parent start is 0.
+        // 根块没有父块，因此它的“隐式父起点”就是 0:00。
         guard let parentBlockID = block.parentBlockID else {
             return 0
         }
@@ -784,8 +832,9 @@ public enum DayPlanEngine {
         preservingResolvedEndMinuteOfDay resolvedEndMinuteOfDay: Int,
         activeBlocks: [TimeBlock]
     ) throws -> TimeBlockTiming {
-        // Gesture code thinks in resolved absolute minutes, but persistence preserves
-        // whether a block was authored as absolute or relative timing.
+        // UI 手势关心的是“绝对分钟数”，
+        // 但持久化层仍要保留用户原本是以 absolute 还是 relative 的方式定义这个块。
+        // 所以这里负责把“移动后的绝对 start”重新翻译回合适的 `TimeBlockTiming`。
         switch block.timing {
         case let .absolute(_, requestedEndMinuteOfDay):
             return .absolute(
@@ -817,8 +866,9 @@ public enum DayPlanEngine {
         in resolvedPlan: DayPlan,
         activeBlocks: [TimeBlock]
     ) throws -> Bool {
-        // Instead of deriving every descendant interaction by hand, we simulate the
-        // candidate in a temporary plan and reuse the main resolver as the oracle.
+        // 这里采用“模拟而不是手推公式”的策略。
+        // 原因是 descendant overlay 的联动约束容易很复杂，
+        // 直接构造一个临时 plan 再交给主解析器判断，反而更稳更容易维护。
         guard let currentResolvedEnd = target.resolvedEndMinuteOfDay else {
             throw ThingStructCoreError.invalidResolvedRange(blockID: target.id, start: -1, end: -1)
         }
@@ -847,7 +897,7 @@ public enum DayPlanEngine {
         startingAt blockID: UUID,
         childrenByParent: [UUID: [UUID]]
     ) -> Set<UUID> {
-        // Iterative depth-first search over the block tree.
+        // 用迭代版 DFS 收集整棵后代子树。
         var descendants: Set<UUID> = []
         var stack = childrenByParent[blockID] ?? []
 

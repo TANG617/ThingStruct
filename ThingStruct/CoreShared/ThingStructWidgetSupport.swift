@@ -1,5 +1,15 @@
 import Foundation
 
+// 这个文件是 Widget 专用的“展示数据适配层”。
+// 重要边界是：
+// - `NowScreenModel` 仍然是 app 内部的屏幕模型
+// - Widget 不直接依赖整个 View/Store，而是拿一个更扁平、更稳定的快照
+// 对 C++ 开发者可以类比成：先把复杂业务对象投影成一个只读 DTO，
+// 再交给另一个渲染进程使用。
+
+// 单个任务在 Widget 中的扁平展示模型。
+// 这里故意把 `UUID` 存成字符串，是因为 AppIntent/Widget 参数和跨进程通信
+// 更适合使用稳定、易序列化的纯值数据。
 struct ThingStructWidgetTaskItem: Identifiable, Equatable, Sendable {
     var dateISO: String
     var blockID: String
@@ -16,6 +26,8 @@ struct ThingStructWidgetTaskItem: Identifiable, Equatable, Sendable {
     }
 }
 
+// 单个时间块在 Widget 中的展示模型。
+// Widget UI 不需要知道完整的 `TimeBlock` 结构，只需要标题、层级、时间范围等。
 struct ThingStructWidgetBlockItem: Identifiable, Equatable, Sendable {
     var blockID: String
     var title: String
@@ -30,6 +42,9 @@ struct ThingStructWidgetBlockItem: Identifiable, Equatable, Sendable {
     }
 }
 
+// Widget 的完整快照。
+// 你可以把它理解为：“在某一时刻，Widget 需要拿到的全部只读数据包”。
+// 一旦快照构建完成，Widget 视图层只负责渲染，不再做业务推理。
 struct ThingStructWidgetSnapshot: Equatable, Sendable {
     var date: LocalDay
     var minuteOfDay: Int
@@ -41,6 +56,8 @@ struct ThingStructWidgetSnapshot: Equatable, Sendable {
     var statusMessage: String?
 
     static func placeholder() -> ThingStructWidgetSnapshot {
+        // `placeholder` 是 WidgetKit 的占位内容：
+        // 在系统还没拿到真实数据、或在配置页/预览页里，会先显示这份假数据。
         ThingStructWidgetSnapshot(
             date: LocalDay.today(),
             minuteOfDay: Date.now.minuteOfDay,
@@ -96,11 +113,16 @@ struct ThingStructWidgetSnapshot: Equatable, Sendable {
     }
 }
 
+// `SnapshotBuilder` 负责把 app 的屏幕模型压缩成 widget 友好的结构。
+// 这里不直接从 document 拼 UI，是因为：
+// 1. 业务规则已经在 presentation 层算好了
+// 2. widget 只需要少量字段，重新依赖完整模型会增加耦合
 enum ThingStructWidgetSnapshotBuilder {
     static func makeSnapshot(
         from now: NowScreenModel,
         maxTaskCount: Int
     ) -> ThingStructWidgetSnapshot {
+        // 先把当前活跃链转换成轻量 block 列表。
         let blocks = now.activeChain.map { item in
             ThingStructWidgetBlockItem(
                 blockID: item.id.uuidString,
@@ -115,7 +137,9 @@ enum ThingStructWidgetSnapshotBuilder {
                 isCurrent: item.isCurrent
             )
         }
+        // Widget 更关注“当前块”，所以如果链上有 current 就优先找它。
         let currentBlock = blocks.first(where: \.isCurrent) ?? blocks.first
+        // 任务也会做一次优先级重排，让当前块的任务优先显示。
         let prioritizedSections = prioritizedTaskSections(from: now.taskSections)
         let tasks = prioritizedSections
             .flatMap { section in
@@ -153,6 +177,9 @@ enum ThingStructWidgetSnapshotBuilder {
         for snapshot: ThingStructWidgetSnapshot,
         referenceDate: Date
     ) -> Date {
+        // Widget 不能像 app 内部那样持续运行，所以要显式告诉系统：
+        // “最晚什么时候请再来拿一次新快照”。
+        // 这里选择“当前块结束时”或“15 分钟后”中的更早者，保证时间推进时 UI 不会太旧。
         let fallback = referenceDate.addingTimeInterval(15 * 60)
 
         guard
@@ -169,6 +196,7 @@ enum ThingStructWidgetSnapshotBuilder {
     private static func prioritizedTaskSections(
         from sections: [NowTaskSection]
     ) -> [NowTaskSection] {
+        // 当前 section 优先，这样小组件有限的空间会先展示“你现在最该做什么”。
         guard let currentSection = sections.first(where: \.isCurrent) else {
             return sections
         }
@@ -179,6 +207,9 @@ enum ThingStructWidgetSnapshotBuilder {
     private static func prioritizedTasks(
         from section: NowTaskSection
     ) -> [TaskItem] {
+        // 这里的排序规则值得注意：
+        // 当前实现会把已完成任务排在前面，因为排序条件写的是 `rhs.element.isCompleted`。
+        // 注释保留这个事实，方便以后你回看时理解 widget 展示顺序来自这里。
         section.tasks.enumerated()
             .sorted { lhs, rhs in
                 if lhs.element.isCompleted != rhs.element.isCompleted {
@@ -193,6 +224,7 @@ enum ThingStructWidgetSnapshotBuilder {
         startMinuteOfDay: Int,
         endMinuteOfDay: Int
     ) -> String {
+        // Widget 展示层偏向直接使用字符串，避免每个视图再去重复格式化。
         "\(formattedTime(startMinuteOfDay)) - \(formattedTime(endMinuteOfDay))"
     }
 
@@ -203,6 +235,9 @@ enum ThingStructWidgetSnapshotBuilder {
     }
 
     private static func endMinuteOfDay(from timeRange: String) -> Int? {
+        // 这里反向解析时间字符串只为了估算下一次刷新时间。
+        // 更理想的长期方案通常是直接在 snapshot 里保存 end minute，
+        // 但当前设计里用已有展示文案就够了。
         let pieces = timeRange.components(separatedBy: " - ")
         guard pieces.count == 2 else {
             return nil
@@ -226,6 +261,9 @@ extension ThingStructDocumentRepository {
         at date: Date,
         maxTaskCount: Int
     ) throws -> ThingStructWidgetSnapshot {
+        // repository 先提供“准备好的 now screen model”，
+        // 再由 builder 生成 widget 快照。
+        // 这样 repository 负责读数据和准备业务上下文，builder 负责展示投影。
         let now = try preparedNowScreenModel(at: date)
         return ThingStructWidgetSnapshotBuilder.makeSnapshot(
             from: now,
