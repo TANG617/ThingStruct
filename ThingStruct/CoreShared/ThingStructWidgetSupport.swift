@@ -48,6 +48,7 @@ struct ThingStructWidgetBlockItem: Identifiable, Equatable, Sendable {
 struct ThingStructWidgetSnapshot: Equatable, Sendable {
     var date: LocalDay
     var minuteOfDay: Int
+    var requiresTemplateSelection: Bool
     var currentBlockTitle: String?
     var currentBlockTimeRangeText: String?
     var blocks: [ThingStructWidgetBlockItem]
@@ -61,6 +62,7 @@ struct ThingStructWidgetSnapshot: Equatable, Sendable {
         ThingStructWidgetSnapshot(
             date: LocalDay.today(),
             minuteOfDay: Date.now.minuteOfDay,
+            requiresTemplateSelection: false,
             currentBlockTitle: "Now",
             currentBlockTimeRangeText: "09:00 - 10:30",
             blocks: [
@@ -161,6 +163,7 @@ enum ThingStructWidgetSnapshotBuilder {
         return ThingStructWidgetSnapshot(
             date: now.date,
             minuteOfDay: now.minuteOfDay,
+            requiresTemplateSelection: false,
             currentBlockTitle: currentBlock?.title,
             currentBlockTimeRangeText: currentBlock?.timeRangeText,
             blocks: blocks,
@@ -197,6 +200,10 @@ enum ThingStructWidgetSnapshotBuilder {
         from sections: [NowTaskSection]
     ) -> [NowTaskSection] {
         // 当前 section 优先，这样小组件有限的空间会先展示“你现在最该做什么”。
+        if let taskSourceSection = sections.first(where: \.isTaskSource) {
+            return [taskSourceSection] + sections.filter { $0.id != taskSourceSection.id }
+        }
+
         guard let currentSection = sections.first(where: \.isCurrent) else {
             return sections
         }
@@ -261,10 +268,36 @@ extension ThingStructDocumentRepository {
         at date: Date,
         maxTaskCount: Int
     ) throws -> ThingStructWidgetSnapshot {
+        let localDay = LocalDay(date: date)
+        let document = try preparedDocument(at: date)
+
+        if try TemplateEngine.requiresExplicitTemplateSelection(
+            for: localDay,
+            today: localDay,
+            existingDayPlans: document.dayPlans,
+            daySelections: document.daySelections
+        ) {
+            return ThingStructWidgetSnapshot(
+                date: localDay,
+                minuteOfDay: date.minuteOfDay,
+                requiresTemplateSelection: true,
+                currentBlockTitle: nil,
+                currentBlockTimeRangeText: nil,
+                blocks: [],
+                remainingTaskCount: 0,
+                tasks: [],
+                statusMessage: "Choose today’s template"
+            )
+        }
+
         // repository 先提供“准备好的 now screen model”，
         // 再由 builder 生成 widget 快照。
         // 这样 repository 负责读数据和准备业务上下文，builder 负责展示投影。
-        let now = try preparedNowScreenModel(at: date)
+        let now = try ThingStructPresentation.nowScreenModel(
+            document: document,
+            date: localDay,
+            minuteOfDay: date.minuteOfDay
+        )
         return ThingStructWidgetSnapshotBuilder.makeSnapshot(
             from: now,
             maxTaskCount: maxTaskCount

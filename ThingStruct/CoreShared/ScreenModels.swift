@@ -41,6 +41,7 @@ public struct NowTaskSection: Identifiable, Equatable, Sendable {
     public var endMinuteOfDay: Int
     public var tasks: [TaskItem]
     public var isCurrent: Bool
+    public var isTaskSource: Bool
     public var isComplete: Bool
 }
 
@@ -48,8 +49,10 @@ public struct NowScreenModel: Equatable, Sendable {
     public var date: LocalDay
     public var minuteOfDay: Int
     public var activeChain: [NowChainItem]
+    public var currentBlockTitle: String?
     public var noteSections: [NowNoteSection]
     public var statusMessage: String?
+    public var taskSourceTitle: String?
     public var taskSections: [NowTaskSection]
 }
 
@@ -107,6 +110,7 @@ public struct BlockDetailModel: Identifiable, Equatable, Sendable {
     public var startMinuteOfDay: Int
     public var endMinuteOfDay: Int
     public var isBlank: Bool
+    public var reminders: [ReminderRule]
     public var tasks: [TaskItem]
     public var parentBlockID: UUID?
     public var parentBlockTitle: String?
@@ -127,19 +131,28 @@ public struct TodayScreenModel: Equatable, Sendable {
 public struct SuggestedTemplateSummary: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var sourceDate: LocalDay
+    public var timeRangeText: String?
     public var baseBlockCount: Int
+    public var overlayCount: Int
     public var totalBlockCount: Int
     public var taskBlueprintCount: Int
+    public var reminderCount: Int
     public var previewTitles: [String]
 }
 
-public struct SavedTemplateSummary: Identifiable, Equatable, Sendable {
+public struct TemplateCandidateSummary: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var title: String
+    public var timeRangeText: String?
+    public var baseBlockCount: Int
+    public var overlayCount: Int
     public var totalBlockCount: Int
-    public var taskBlueprintCount: Int
-    public var assignedWeekdays: [Weekday]
+    public var taskCount: Int
+    public var reminderCount: Int
     public var previewTitles: [String]
+    public var assignedWeekdays: [Weekday]
+    public var isDefaultForToday: Bool
+    public var isCurrentForToday: Bool
 }
 
 public struct TemplateScheduleSummary: Equatable, Sendable {
@@ -153,9 +166,19 @@ public struct TemplateScheduleSummary: Equatable, Sendable {
     public var finalTemplateTitle: String?
 }
 
+public struct DayTemplateChooserModel: Equatable, Sendable {
+    public var date: LocalDay
+    public var currentSelection: TemplateCandidateSummary?
+    public var defaultTemplate: TemplateCandidateSummary?
+    public var availableTemplates: [TemplateCandidateSummary]
+    public var requiresSelection: Bool
+    public var canChooseNoTemplate: Bool
+}
+
 public struct TemplatesScreenModel: Equatable, Sendable {
+    public var todayChooser: DayTemplateChooserModel
     public var suggestedTemplates: [SuggestedTemplateSummary]
-    public var savedTemplates: [SavedTemplateSummary]
+    public var savedTemplates: [TemplateCandidateSummary]
     public var todaySchedule: TemplateScheduleSummary
     public var tomorrowSchedule: TemplateScheduleSummary
 }
@@ -185,7 +208,8 @@ public enum ThingStructPresentation {
         )
         let taskSections = makeNowTaskSections(
             from: sortedChain,
-            activeBlockID: selection.activeBlock?.id
+            activeBlockID: selection.activeBlock?.id,
+            taskSourceBlockID: selection.taskSourceBlock?.id
         )
 
         let statusMessage: String?
@@ -204,8 +228,10 @@ public enum ThingStructPresentation {
             date: date,
             minuteOfDay: minuteOfDay,
             activeChain: activeChain,
+            currentBlockTitle: selection.activeBlock?.isBlankBaseBlock == true ? nil : selection.activeBlock?.title,
             noteSections: noteSections,
             statusMessage: statusMessage,
+            taskSourceTitle: selection.taskSourceBlock?.title,
             taskSections: taskSections
         )
     }
@@ -323,27 +349,44 @@ public enum ThingStructPresentation {
             from: document.dayPlans
         )
         .map { template in
-            SuggestedTemplateSummary(
+            let metrics = try templateMetrics(for: template.blocks)
+            return SuggestedTemplateSummary(
                 id: template.id,
                 sourceDate: template.sourceDate,
+                timeRangeText: metrics.timeRangeText,
                 baseBlockCount: template.blocks.filter { $0.layerIndex == 0 }.count,
+                overlayCount: template.blocks.filter { $0.layerIndex > 0 }.count,
                 totalBlockCount: template.blocks.count,
                 taskBlueprintCount: template.blocks.reduce(0) { $0 + $1.taskBlueprints.count },
-                previewTitles: Array(template.blocks.map(\.title).prefix(3))
+                reminderCount: template.blocks.reduce(0) { $0 + $1.reminders.count },
+                previewTitles: metrics.previewTitles
             )
         }
 
-        let saved = document.savedTemplates.map { template in
-            SavedTemplateSummary(
+        let defaultTemplateID = document.weekdayRules
+            .first(where: { $0.weekday == referenceDay.weekday })?
+            .savedTemplateID
+        let currentTemplateID = document.daySelection(for: referenceDay)?.selectedTemplateID
+            ?? document.dayPlan(for: referenceDay)?.sourceSavedTemplateID
+
+        let saved: [TemplateCandidateSummary] = try document.savedTemplates.map { template in
+            let metrics = try templateMetrics(for: template.blocks)
+            return TemplateCandidateSummary(
                 id: template.id,
                 title: template.title,
+                timeRangeText: metrics.timeRangeText,
+                baseBlockCount: template.blocks.filter { $0.layerIndex == 0 }.count,
+                overlayCount: template.blocks.filter { $0.layerIndex > 0 }.count,
                 totalBlockCount: template.blocks.count,
-                taskBlueprintCount: template.blocks.reduce(0) { $0 + $1.taskBlueprints.count },
+                taskCount: template.blocks.reduce(0) { $0 + $1.taskBlueprints.count },
+                reminderCount: template.blocks.reduce(0) { $0 + $1.reminders.count },
+                previewTitles: metrics.previewTitles,
                 assignedWeekdays: document.weekdayRules
                     .filter { $0.savedTemplateID == template.id }
                     .map(\.weekday)
                     .sorted(by: { $0.rawValue < $1.rawValue }),
-                previewTitles: Array(template.blocks.map(\.title).prefix(3))
+                isDefaultForToday: template.id == defaultTemplateID,
+                isCurrentForToday: template.id == currentTemplateID
             )
         }
         .sorted { lhs, rhs in
@@ -351,6 +394,23 @@ public enum ThingStructPresentation {
         }
 
         return TemplatesScreenModel(
+            todayChooser: DayTemplateChooserModel(
+                date: referenceDay,
+                currentSelection: currentTemplateID.flatMap { currentID in
+                    saved.first(where: { $0.id == currentID })
+                },
+                defaultTemplate: defaultTemplateID.flatMap { defaultID in
+                    saved.first(where: { $0.id == defaultID })
+                },
+                availableTemplates: saved,
+                requiresSelection: try TemplateEngine.requiresExplicitTemplateSelection(
+                    for: referenceDay,
+                    today: referenceDay,
+                    existingDayPlans: document.dayPlans,
+                    daySelections: document.daySelections
+                ),
+                canChooseNoTemplate: true
+            ),
             suggestedTemplates: suggested,
             savedTemplates: saved,
             todaySchedule: try scheduleSummary(for: referenceDay, document: document),
@@ -366,7 +426,8 @@ public enum ThingStructPresentation {
             for: date,
             savedTemplates: document.savedTemplates,
             weekdayRules: document.weekdayRules,
-            overrides: document.overrides
+            overrides: document.overrides,
+            daySelections: document.daySelections
         )
 
         let weekdayTemplateID = document.weekdayRules.first(where: { $0.weekday == date.weekday })?.savedTemplateID
@@ -415,6 +476,7 @@ public enum ThingStructPresentation {
             startMinuteOfDay: snappedStart,
             endMinuteOfDay: snappedEnd,
             isBlank: false,
+            reminders: block.reminders,
             tasks: block.tasks.sorted(by: taskSort),
             parentBlockID: block.parentBlockID,
             parentBlockTitle: parentTitle
@@ -428,7 +490,7 @@ private nonisolated func makeTodayAddOptions(
 ) -> [TodayAddOption] {
     var options = [
         TodayAddOption(
-            title: "New Base Block",
+            title: "New Block",
             kind: .base
         )
     ]
@@ -454,7 +516,7 @@ private nonisolated func makeTodayAddOptions(
     options.append(
         contentsOf: path.reversed().map { block in
             TodayAddOption(
-                title: "New \(nextTimelineLayerTitle(after: block.layerIndex)) Overlay in \(block.title)",
+                title: "New \(nextTimelineLayerTitle(after: block.layerIndex)) in \(block.title)",
                 kind: .overlay(
                     parentBlockID: block.id,
                     layerIndex: block.layerIndex + 1
@@ -467,8 +529,8 @@ private nonisolated func makeTodayAddOptions(
 }
 
 private nonisolated func nextTimelineLayerTitle(after layerIndex: Int) -> String {
-    let nextLayerIndex = layerIndex + 1
-    return nextLayerIndex == 0 ? "Base" : "L\(nextLayerIndex)"
+    _ = layerIndex
+    return "Overlay"
 }
 
 private nonisolated func makeNowChainItems(
@@ -520,17 +582,23 @@ private nonisolated func makeNowNoteSections(
 
 private nonisolated func makeNowTaskSections(
     from chain: [TimeBlock],
-    activeBlockID: UUID?
+    activeBlockID: UUID?,
+    taskSourceBlockID: UUID?
 ) -> [NowTaskSection] {
     // Empty task lists simply do not appear in the Now tasks area.
     chain.filter { !$0.tasks.isEmpty }.compactMap { block in
-        makeNowTaskSection(from: block, activeBlockID: activeBlockID)
+        makeNowTaskSection(
+            from: block,
+            activeBlockID: activeBlockID,
+            taskSourceBlockID: taskSourceBlockID
+        )
     }
 }
 
 private nonisolated func makeNowTaskSection(
     from block: TimeBlock,
-    activeBlockID: UUID?
+    activeBlockID: UUID?,
+    taskSourceBlockID: UUID?
 ) -> NowTaskSection? {
     guard
         let start = block.resolvedStartMinuteOfDay,
@@ -547,8 +615,54 @@ private nonisolated func makeNowTaskSection(
         endMinuteOfDay: end,
         tasks: block.tasks.sorted(by: taskSort),
         isCurrent: block.id == activeBlockID,
+        isTaskSource: block.id == taskSourceBlockID,
         isComplete: !block.hasIncompleteTasks
     )
+}
+
+private nonisolated func templateMetrics(
+    for blocks: [BlockTemplate]
+) throws -> (timeRangeText: String?, previewTitles: [String]) {
+    let template = SavedDayTemplate(
+        title: "Preview",
+        sourceSuggestedTemplateID: UUID(),
+        blocks: blocks
+    )
+    let preview = try TemplateEngine.previewDayPlan(from: template)
+    let visibleBlocks = preview.blocks
+        .filter { !$0.isCancelled }
+        .sorted { lhs, rhs in
+            let lhsStart = lhs.resolvedStartMinuteOfDay ?? Int.max
+            let rhsStart = rhs.resolvedStartMinuteOfDay ?? Int.max
+            if lhsStart != rhsStart {
+                return lhsStart < rhsStart
+            }
+            if lhs.layerIndex != rhs.layerIndex {
+                return lhs.layerIndex < rhs.layerIndex
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    let startMinute = visibleBlocks.compactMap(\.resolvedStartMinuteOfDay).min()
+    let endMinute = visibleBlocks.compactMap(\.resolvedEndMinuteOfDay).max()
+    let timeRangeText: String? = if let startMinute, let endMinute {
+        "\(formattedMinute(startMinute)) - \(formattedMinute(endMinute))"
+    } else {
+        nil
+    }
+    let previewTitles = Array(
+        visibleBlocks
+            .filter { $0.layerIndex == 0 }
+            .map(\.title)
+            .prefix(3)
+    )
+
+    return (timeRangeText, previewTitles)
+}
+
+private nonisolated func formattedMinute(_ minuteOfDay: Int) -> String {
+    let hour = minuteOfDay / 60
+    let minute = minuteOfDay % 60
+    return String(format: "%02d:%02d", hour, minute)
 }
 
 private nonisolated func normalizedNoteText(_ note: String?) -> String? {

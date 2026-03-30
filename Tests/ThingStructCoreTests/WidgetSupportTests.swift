@@ -37,8 +37,10 @@ final class WidgetSupportTests: XCTestCase {
                     isCurrent: false
                 )
             ],
+            currentBlockTitle: "Focus Sprint",
             noteSections: [],
             statusMessage: nil,
+            taskSourceTitle: "Focus Sprint",
             taskSections: [
                 NowTaskSection(
                     id: baseBlockID,
@@ -48,6 +50,7 @@ final class WidgetSupportTests: XCTestCase {
                     endMinuteOfDay: 720,
                     tasks: [task("Base task")],
                     isCurrent: false,
+                    isTaskSource: false,
                     isComplete: false
                 ),
                 NowTaskSection(
@@ -61,6 +64,7 @@ final class WidgetSupportTests: XCTestCase {
                         task("Current next", order: 1)
                     ],
                     isCurrent: true,
+                    isTaskSource: true,
                     isComplete: false
                 )
             ]
@@ -73,12 +77,32 @@ final class WidgetSupportTests: XCTestCase {
 
         XCTAssertEqual(snapshot.currentBlockTitle, "Focus Sprint")
         XCTAssertEqual(snapshot.currentBlockTimeRangeText, "09:00 - 11:00")
-        XCTAssertEqual(snapshot.blocks.map(\.title), ["Focus Sprint", "Morning"])
-        XCTAssertEqual(snapshot.blocks.map(\.layerIndex), [1, 0])
+        XCTAssertEqual(snapshot.blocks.map { $0.title }, ["Focus Sprint", "Morning"])
+        XCTAssertEqual(snapshot.blocks.map { $0.layerIndex }, [1, 0])
         XCTAssertTrue(snapshot.blocks.first?.isCurrent == true)
         XCTAssertEqual(snapshot.remainingTaskCount, 2)
-        XCTAssertEqual(snapshot.tasks.map(\.title), ["Current next", "Completed first", "Base task"])
-        XCTAssertEqual(snapshot.tasks.map(\.blockTitle), ["Focus Sprint", "Focus Sprint", "Morning"])
-        XCTAssertEqual(snapshot.tasks.map(\.layerIndex), [1, 1, 0])
+        XCTAssertEqual(snapshot.tasks.map { $0.title }, ["Current next", "Completed first", "Base task"])
+        XCTAssertEqual(snapshot.tasks.map { $0.blockTitle }, ["Focus Sprint", "Focus Sprint", "Morning"])
+        XCTAssertEqual(snapshot.tasks.map { $0.layerIndex }, [1, 1, 0])
+    }
+
+    func testRepositoryWidgetSnapshotRequestsChooserWhenTodayHasNoSelection() throws {
+        let day = LocalDay(year: 2026, month: 3, day: 22)
+        let fileURL = FileManager.default.temporaryDirectory
+            .appending(path: "ThingStructTests")
+            .appending(path: "\(UUID().uuidString).json")
+        let repository = ThingStructDocumentRepository(fileURL: fileURL)
+
+        try repository.save(ThingStructDocument())
+
+        let snapshot = try repository.widgetSnapshot(
+            at: try XCTUnwrap(day.date(minuteOfDay: 600)),
+            maxTaskCount: 3
+        )
+
+        XCTAssertTrue(snapshot.requiresTemplateSelection)
+        XCTAssertTrue(snapshot.blocks.isEmpty)
+        XCTAssertTrue(snapshot.tasks.isEmpty)
+        XCTAssertEqual(snapshot.statusMessage, "Choose today’s template")
     }
 }

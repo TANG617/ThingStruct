@@ -59,6 +59,167 @@ final class TemplateEngineTests: XCTestCase {
         XCTAssertEqual(selected?.id, secondTemplate.id)
     }
 
+    func testExplicitDaySelectionBeatsOverrideAndWeekdayRule() throws {
+        let weekdayTemplate = SavedDayTemplate(
+            title: "Weekday",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: []
+        )
+        let overrideTemplate = SavedDayTemplate(
+            title: "Override",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: []
+        )
+        let pickedTemplate = SavedDayTemplate(
+            title: "Picked",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: []
+        )
+        let date = LocalDay(year: 2026, month: 3, day: 20)
+
+        let selected = try TemplateEngine.selectedSavedTemplate(
+            for: date,
+            savedTemplates: [weekdayTemplate, overrideTemplate, pickedTemplate],
+            weekdayRules: [WeekdayTemplateRule(weekday: .friday, savedTemplateID: weekdayTemplate.id)],
+            overrides: [DateTemplateOverride(date: date, savedTemplateID: overrideTemplate.id)],
+            daySelections: [
+                DayTemplateSelection(
+                    date: date,
+                    selectedTemplateID: pickedTemplate.id,
+                    source: .pickedTemplate,
+                    selectedAt: Date(timeIntervalSince1970: 1_000)
+                )
+            ]
+        )
+
+        XCTAssertEqual(selected?.id, pickedTemplate.id)
+    }
+
+    func testRequiresExplicitTemplateSelectionOnlyForTodayWithoutPlanOrChoice() throws {
+        let today = LocalDay(year: 2026, month: 3, day: 20)
+        let future = today.adding(days: 1)
+
+        XCTAssertTrue(
+            try TemplateEngine.requiresExplicitTemplateSelection(
+                for: today,
+                today: today,
+                existingDayPlans: [],
+                daySelections: []
+            )
+        )
+        XCTAssertFalse(
+            try TemplateEngine.requiresExplicitTemplateSelection(
+                for: future,
+                today: today,
+                existingDayPlans: [],
+                daySelections: []
+            )
+        )
+        XCTAssertFalse(
+            try TemplateEngine.requiresExplicitTemplateSelection(
+                for: today,
+                today: today,
+                existingDayPlans: [
+                    DayPlan(date: today, blocks: [])
+                ],
+                daySelections: []
+            )
+        )
+        XCTAssertFalse(
+            try TemplateEngine.requiresExplicitTemplateSelection(
+                for: today,
+                today: today,
+                existingDayPlans: [],
+                daySelections: [
+                    DayTemplateSelection(
+                        date: today,
+                        selectedTemplateID: nil,
+                        source: .noTemplate,
+                        selectedAt: Date(timeIntervalSince1970: 2_000)
+                    )
+                ]
+            )
+        )
+    }
+
+    func testChooseTemplateCreatesSelectionAndMaterializedPlan() throws {
+        let selectedAt = Date(timeIntervalSince1970: 4_000)
+        let date = LocalDay(year: 2026, month: 3, day: 21)
+        let template = SavedDayTemplate(
+            title: "Morning",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: [
+                templateBlock(
+                    title: "Deep Work",
+                    tasks: [TaskBlueprint(title: "Outline")],
+                    timing: .absolute(startMinuteOfDay: 540, requestedEndMinuteOfDay: 660)
+                )
+            ]
+        )
+
+        let outcome = try TemplateEngine.chooseTemplate(
+            for: date,
+            templateID: template.id,
+            source: .pickedTemplate,
+            existingDayPlans: [],
+            savedTemplates: [template],
+            selectedAt: selectedAt
+        )
+
+        switch outcome {
+        case .requiresForceReplace:
+            XCTFail("Expected the template choice to materialize immediately")
+
+        case let .applied(selection, dayPlan):
+            XCTAssertEqual(selection.date, date)
+            XCTAssertEqual(selection.selectedTemplateID, template.id)
+            XCTAssertEqual(selection.source, .pickedTemplate)
+            XCTAssertEqual(selection.selectedAt, selectedAt)
+            XCTAssertEqual(dayPlan.date, date)
+            XCTAssertEqual(dayPlan.sourceSavedTemplateID, template.id)
+            XCTAssertEqual(dayPlan.lastGeneratedAt, selectedAt)
+            XCTAssertEqual(dayPlan.blocks.map(\.title), ["Deep Work"])
+        }
+    }
+
+    func testChooseTemplateRequiresForceReplaceWhenExistingPlanHasEditsOrCompletedTasks() throws {
+        let template = SavedDayTemplate(
+            title: "Morning",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: []
+        )
+        let date = LocalDay(year: 2026, month: 3, day: 21)
+        let editedPlan = DayPlan(
+            date: date,
+            hasUserEdits: true,
+            blocks: [baseBlock(title: "Edited", start: 540, requestedEnd: 600)]
+        )
+
+        let editedOutcome = try TemplateEngine.chooseTemplate(
+            for: date,
+            templateID: template.id,
+            source: .pickedTemplate,
+            existingDayPlans: [editedPlan],
+            savedTemplates: [template]
+        )
+        XCTAssertEqual(editedOutcome, .requiresForceReplace)
+
+        let completedPlan = DayPlan(
+            date: date,
+            hasUserEdits: false,
+            blocks: [baseBlock(title: "Done", start: 540, requestedEnd: 600, tasks: [task("Finished", completed: true)])]
+        )
+
+        let completedOutcome = try TemplateEngine.chooseTemplate(
+            for: date,
+            templateID: template.id,
+            source: .pickedTemplate,
+            existingDayPlans: [completedPlan],
+            savedTemplates: [template]
+        )
+        XCTAssertEqual(completedOutcome, .requiresForceReplace)
+    }
+
     func testInstantiatingSavedTemplateResetsTaskCompletion() throws {
         let generatedAt = Date(timeIntervalSince1970: 1_234)
         let template = SavedDayTemplate(

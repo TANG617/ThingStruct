@@ -77,6 +77,41 @@ final class PresentationTests: XCTestCase {
         XCTAssertFalse(model.taskSections[1].isComplete)
     }
 
+    func testNowScreenModelSeparatesCurrentBlockFromTaskSourceBlock() throws {
+        let baseID = UUID()
+        let overlayID = UUID()
+        let plan = makePlan(blocks: [
+            baseBlock(
+                id: baseID,
+                title: "Morning",
+                start: 540,
+                requestedEnd: 720,
+                tasks: [task("Base task")]
+            ),
+            overlayRelative(
+                id: overlayID,
+                parentID: baseID,
+                layerIndex: 1,
+                title: "Focus Sprint",
+                offset: 0,
+                duration: 120,
+                tasks: [task("Finished", completed: true)]
+            )
+        ])
+
+        let model = try ThingStructPresentation.nowScreenModel(
+            document: ThingStructDocument(dayPlans: [try DayPlanEngine.resolved(plan)]),
+            date: LocalDay(year: 2026, month: 3, day: 19),
+            minuteOfDay: 600
+        )
+
+        XCTAssertEqual(model.currentBlockTitle, "Focus Sprint")
+        XCTAssertEqual(model.taskSourceTitle, "Morning")
+        XCTAssertEqual(model.taskSections.map(\.id), [overlayID, baseID])
+        XCTAssertFalse(model.taskSections[0].isTaskSource)
+        XCTAssertTrue(model.taskSections[1].isTaskSource)
+    }
+
     func testTodayScreenModelRoundsBlockTimesToNearestFiveMinutes() throws {
         let blockID = UUID()
         let plan = makePlan(blocks: [
@@ -280,5 +315,86 @@ final class PresentationTests: XCTestCase {
         XCTAssertEqual(model.tomorrowSchedule.weekdayTemplateTitle, "Weekday")
         XCTAssertEqual(model.tomorrowSchedule.overrideTemplateTitle, "Override")
         XCTAssertEqual(model.tomorrowSchedule.finalTemplateTitle, "Override")
+    }
+
+    func testTemplatesScreenModelMarksDefaultAndCurrentChooserTemplates() throws {
+        let referenceDay = LocalDay(year: 2026, month: 3, day: 19)
+        let defaultTemplate = SavedDayTemplate(
+            title: "Weekday Default",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: [
+                templateBlock(
+                    title: "Morning",
+                    timing: .absolute(startMinuteOfDay: 540, requestedEndMinuteOfDay: 720)
+                )
+            ]
+        )
+        let pickedTemplate = SavedDayTemplate(
+            title: "Picked Today",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: [
+                templateBlock(
+                    title: "Focus Sprint",
+                    timing: .absolute(startMinuteOfDay: 600, requestedEndMinuteOfDay: 720)
+                )
+            ]
+        )
+
+        let model = try ThingStructPresentation.templatesScreenModel(
+            document: ThingStructDocument(
+                savedTemplates: [defaultTemplate, pickedTemplate],
+                weekdayRules: [WeekdayTemplateRule(weekday: referenceDay.weekday, savedTemplateID: defaultTemplate.id)],
+                daySelections: [
+                    DayTemplateSelection(
+                        date: referenceDay,
+                        selectedTemplateID: pickedTemplate.id,
+                        source: .pickedTemplate,
+                        selectedAt: Date(timeIntervalSince1970: 1_000)
+                    )
+                ]
+            ),
+            referenceDay: referenceDay
+        )
+
+        XCTAssertFalse(model.todayChooser.requiresSelection)
+        XCTAssertEqual(model.todayChooser.defaultTemplate?.id, defaultTemplate.id)
+        XCTAssertEqual(model.todayChooser.currentSelection?.id, pickedTemplate.id)
+        XCTAssertTrue(model.savedTemplates.first(where: { $0.id == defaultTemplate.id })?.isDefaultForToday == true)
+        XCTAssertTrue(model.savedTemplates.first(where: { $0.id == pickedTemplate.id })?.isCurrentForToday == true)
+    }
+
+    func testTemplatesScreenModelKeepsChooserAvailableForExplicitNoTemplateDay() throws {
+        let referenceDay = LocalDay(year: 2026, month: 3, day: 19)
+        let defaultTemplate = SavedDayTemplate(
+            title: "Weekday Default",
+            sourceSuggestedTemplateID: UUID(),
+            blocks: [
+                templateBlock(
+                    title: "Morning",
+                    timing: .absolute(startMinuteOfDay: 540, requestedEndMinuteOfDay: 720)
+                )
+            ]
+        )
+
+        let model = try ThingStructPresentation.templatesScreenModel(
+            document: ThingStructDocument(
+                savedTemplates: [defaultTemplate],
+                weekdayRules: [WeekdayTemplateRule(weekday: referenceDay.weekday, savedTemplateID: defaultTemplate.id)],
+                daySelections: [
+                    DayTemplateSelection(
+                        date: referenceDay,
+                        selectedTemplateID: nil,
+                        source: .noTemplate,
+                        selectedAt: Date(timeIntervalSince1970: 2_000)
+                    )
+                ]
+            ),
+            referenceDay: referenceDay
+        )
+
+        XCTAssertFalse(model.todayChooser.requiresSelection)
+        XCTAssertNil(model.todayChooser.currentSelection)
+        XCTAssertEqual(model.todayChooser.defaultTemplate?.id, defaultTemplate.id)
+        XCTAssertEqual(model.todaySchedule.finalTemplateTitle, nil)
     }
 }

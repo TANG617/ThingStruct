@@ -547,6 +547,36 @@ public struct DateTemplateOverride: Equatable, Codable, Sendable {
     }
 }
 
+public enum DayTemplateSelectionSource: String, Equatable, Codable, Sendable {
+    case confirmedDefault
+    case pickedTemplate
+    case noTemplate
+}
+
+public struct DayTemplateSelection: Equatable, Codable, Sendable {
+    public var date: LocalDay
+    public var selectedTemplateID: UUID?
+    public var source: DayTemplateSelectionSource
+    public var selectedAt: Date
+
+    public init(
+        date: LocalDay,
+        selectedTemplateID: UUID?,
+        source: DayTemplateSelectionSource,
+        selectedAt: Date = Date()
+    ) {
+        self.date = date
+        self.selectedTemplateID = selectedTemplateID
+        self.source = source
+        self.selectedAt = selectedAt
+    }
+}
+
+public enum DayTemplateChoiceOutcome: Equatable, Sendable {
+    case applied(selection: DayTemplateSelection, dayPlan: DayPlan)
+    case requiresForceReplace
+}
+
 // `ActiveSelection` is the result of asking:
 // "Given the current minute, which chain of nested blocks is active?"
 //

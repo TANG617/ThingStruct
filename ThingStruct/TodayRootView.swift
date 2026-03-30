@@ -3,118 +3,39 @@ import SwiftUI
 import UIKit
 #endif
 
-// `TodayRootView` is the most interaction-heavy screen in the app.
-//
-// It combines:
-// - a timeline visualization
-// - selection state (`selectedBlockID`)
-// - editor sheet presentation
-// - direct manipulation gestures for resizing blocks
 struct TodayRootView: View {
-    // `@Environment(Type.self)` reads a shared dependency from the surrounding
-    // SwiftUI tree. Think of it as injected app state rather than a global singleton.
     @Environment(ThingStructStore.self) private var store
-    // `@State` stores view-local mutable state that survives body recomputation.
+
     @State private var editorSession: BlockEditorSession?
+    @State private var selection: TodaySelection = .none
+    @State private var pendingCancellationBlockID: UUID?
     @State private var jumpToCurrentTrigger = 0
     @State private var scrollToBlockTrigger = 0
     @State private var scrollToBlockID: UUID?
 
     var body: some View {
-        // `NavigationStack` is the native container that provides titles, toolbars,
-        // and future push navigation behavior.
         NavigationStack {
-            RootScreenContainer(
-                isLoaded: store.isLoaded,
-                loadingTitle: "Loading Today",
-                loadingSystemImage: "calendar",
-                loadingDescription: "Preparing your timeline and current context.",
-                errorTitle: "Unable to Load Today",
-                retry: store.reload
-            ) {
-                try store.todayScreenModel()
-            } content: { model in
-                TodayTimelineView(
-                    model: model,
-                    selectedBlockID: store.selectedBlockID,
-                    currentMinute: store.currentMinuteOnSelectedDate(),
-                    jumpToCurrentTrigger: jumpToCurrentTrigger,
-                    scrollToBlockID: scrollToBlockID,
-                    scrollToBlockTrigger: scrollToBlockTrigger,
-                    timingResolver: { blockID in
-                        store.persistedBlock(on: store.selectedDate, blockID: blockID)?.timing
-                    },
-                    resizeBounds: { blockID in
-                        store.resizeBounds(on: store.selectedDate, blockID: blockID)
-                    },
-                    onResizeBlockStart: { blockID, proposedStartMinuteOfDay in
-                        store.resizeBlockStart(
-                            on: store.selectedDate,
-                            blockID: blockID,
-                            proposedStartMinuteOfDay: proposedStartMinuteOfDay
-                        )
-                    },
-                    onResizeBlockEnd: { blockID, proposedEndMinuteOfDay in
-                        store.resizeBlockEnd(
-                            on: store.selectedDate,
-                            blockID: blockID,
-                            proposedEndMinuteOfDay: proposedEndMinuteOfDay
-                        )
-                    },
-                    onCreateBaseInOpenSlot: { startMinuteOfDay, endMinuteOfDay in
-                        var draft = BlockDraft.base(
-                            startMinute: startMinuteOfDay,
-                            endMinute: endMinuteOfDay
-                        )
-                        draft.title = "New Block"
-                        editorSession = BlockEditorSession(
-                            title: "New Base Block",
-                            draft: draft,
-                            scrollToSavedBlockOnSave: true
-                        )
-                    },
-                    onSelect: handleSelection,
-                    onBeginEdit: beginEditingBlock
-                )
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button {
-                            store.moveSelectedDate(by: -1)
-                        } label: {
-                            Image(systemName: "chevron.left")
-                        }
-                    }
-
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        if store.selectedDate == .today() {
-                            Button {
-                                jumpToCurrent()
-                            } label: {
-                                Image(systemName: "location")
-                            }
-                        } else {
-                            Button("Today") {
-                                store.selectDate(.today())
-                            }
-                        }
-
-                        Menu {
-                            ForEach(model.addOptions) { option in
-                                Button {
-                                    beginCreate(from: option)
-                                } label: {
-                                    Label(option.title, systemImage: systemImageName(for: option.kind))
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-
-                        Button {
-                            store.moveSelectedDate(by: 1)
-                        } label: {
-                            Image(systemName: "chevron.right")
-                        }
+            Group {
+                if !store.isLoaded {
+                    ScreenLoadingView(
+                        title: "Loading Today",
+                        systemImage: "calendar",
+                        description: "Preparing your timeline and current context."
+                    )
+                } else if store.requiresTemplateSelection(for: store.selectedDate) {
+                    TodayTemplateChooserView(date: store.selectedDate)
+                } else {
+                    RootScreenContainer(
+                        isLoaded: true,
+                        loadingTitle: "Loading Today",
+                        loadingSystemImage: "calendar",
+                        loadingDescription: "Preparing your timeline and current context.",
+                        errorTitle: "Unable to Load Today",
+                        retry: store.reload
+                    ) {
+                        try store.todayScreenModel()
+                    } content: { model in
+                        timelineContent(model: model)
                     }
                 }
             }
@@ -129,19 +50,317 @@ struct TodayRootView: View {
                 )
             }
         }
+        .confirmationDialog(
+            "Cancel this block?",
+            isPresented: Binding(
+                get: { pendingCancellationBlockID != nil },
+                set: { if !$0 { pendingCancellationBlockID = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Cancel Block", role: .destructive) {
+                confirmCancellation()
+            }
+
+            Button("Keep Block", role: .cancel) {
+                pendingCancellationBlockID = nil
+            }
+        } message: {
+            Text("This block will be removed from today’s running plan.")
+        }
+        .onChange(of: store.selectedDate) { _, _ in
+            pendingCancellationBlockID = nil
+            selection = store.selectedBlockID.map { .block(id: $0, panel: .compact) } ?? .none
+        }
+        .onChange(of: store.selectedBlockID) { _, newValue in
+            guard let blockID = newValue else { return }
+            selection = .block(id: blockID, panel: .compact)
+        }
+        .onChange(of: store.selectedTab) { _, newValue in
+            guard newValue != .today else { return }
+            selection = .none
+            pendingCancellationBlockID = nil
+        }
+    }
+
+    private func timelineContent(model: TodayScreenModel) -> some View {
+        TodayTimelineView(
+            model: model,
+            selectedBlockID: selection.blockID,
+            selectedOpenSlotID: selection.openSlotID,
+            isAdjustingTime: selection.panelState == .adjustingTime,
+            currentMinute: store.currentMinuteOnSelectedDate(),
+            jumpToCurrentTrigger: jumpToCurrentTrigger,
+            scrollToBlockID: scrollToBlockID,
+            scrollToBlockTrigger: scrollToBlockTrigger,
+            timingResolver: { blockID in
+                store.persistedBlock(on: store.selectedDate, blockID: blockID)?.timing
+            },
+            resizeBounds: { blockID in
+                store.resizeBounds(on: store.selectedDate, blockID: blockID)
+            },
+            onResizeBlockStart: { blockID, proposedStartMinuteOfDay in
+                store.resizeBlockStart(
+                    on: store.selectedDate,
+                    blockID: blockID,
+                    proposedStartMinuteOfDay: proposedStartMinuteOfDay
+                )
+            },
+            onResizeBlockEnd: { blockID, proposedEndMinuteOfDay in
+                store.resizeBlockEnd(
+                    on: store.selectedDate,
+                    blockID: blockID,
+                    proposedEndMinuteOfDay: proposedEndMinuteOfDay
+                )
+            },
+            onSelectBlock: handleBlockSelection,
+            onSelectOpenSlot: handleOpenSlotSelection,
+            onClearSelection: clearSelection
+        )
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            inspector(for: model)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    store.moveSelectedDate(by: -1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+            }
+
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if store.selectedDate == .today() {
+                    Button {
+                        jumpToCurrent()
+                    } label: {
+                        Image(systemName: "location")
+                    }
+                } else {
+                    Button("Today") {
+                        store.selectDate(.today())
+                    }
+                }
+
+                Menu {
+                    ForEach(model.addOptions) { option in
+                        Button {
+                            beginCreate(from: option)
+                        } label: {
+                            Label(option.title, systemImage: systemImageName(for: option.kind))
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                }
+
+                Button {
+                    store.moveSelectedDate(by: 1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.22), value: selection)
+        .task(id: model.date) {
+            syncSelectionForDisplayedDate(using: model)
+        }
+        .onChange(of: model.blocks.map(\.id)) { _, _ in
+            validateSelection(using: model)
+        }
+        .onChange(of: model.openSlots.map(\.id)) { _, _ in
+            validateSelection(using: model)
+        }
+    }
+
+    @ViewBuilder
+    private func inspector(for model: TodayScreenModel) -> some View {
+        switch selection {
+        case .none:
+            EmptyView()
+
+        case let .block(id, panel):
+            if let detail = selectedBlockDetail(for: id) {
+                TodayDockedInspector(
+                    panelState: panel,
+                    onExpand: expandSelection,
+                    onCollapse: collapseSelection,
+                    onDismiss: clearSelection
+                ) {
+                    TodayBlockInspectorView(
+                        detail: detail,
+                        panelState: panel,
+                        onSelectParent: {
+                            selectParentBlock(from: detail)
+                        },
+                        onEdit: {
+                            beginEditingBlock(id)
+                        },
+                        onExpand: expandSelection,
+                        onAdjustTime: {
+                            selection = .block(id: id, panel: .adjustingTime)
+                        },
+                        onFinishAdjusting: {
+                            selection = .block(id: id, panel: .expanded)
+                        },
+                        onCancelAdjusting: {
+                            selection = .block(id: id, panel: .expanded)
+                        },
+                        onAddOverlay: {
+                            beginCreateOverlay(on: id, layerIndex: detail.layerIndex + 1)
+                        },
+                        onRequestCancellation: {
+                            pendingCancellationBlockID = id
+                        }
+                    )
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if let block = model.blocks.first(where: { $0.id == id }) {
+                TodayDockedInspector(
+                    panelState: panel,
+                    onExpand: expandSelection,
+                    onCollapse: collapseSelection,
+                    onDismiss: clearSelection
+                ) {
+                    TodayUnavailableInspectorView(
+                        title: block.title,
+                        startMinuteOfDay: block.startMinuteOfDay,
+                        endMinuteOfDay: block.endMinuteOfDay
+                    )
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+        case let .openSlot(id, panel):
+            if let slot = model.openSlots.first(where: { $0.id == id }) {
+                TodayDockedInspector(
+                    panelState: panel,
+                    onExpand: expandSelection,
+                    onCollapse: collapseSelection,
+                    onDismiss: clearSelection
+                ) {
+                    TodayOpenSlotInspectorView(
+                        slot: slot,
+                        panelState: panel,
+                        onAddBlock: {
+                            beginCreate(in: slot)
+                        },
+                        onExpand: expandSelection
+                    )
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+    }
+
+    private func syncSelectionForDisplayedDate(using model: TodayScreenModel) {
+        guard model.date == store.selectedDate else { return }
+
+        switch selection {
+        case let .block(id, panel) where model.blocks.contains(where: { $0.id == id }):
+            selection = .block(id: id, panel: panel)
+            store.selectBlock(id)
+
+        case let .openSlot(id, panel) where model.openSlots.contains(where: { $0.id == id }):
+            selection = .openSlot(id: id, panel: panel)
+            store.selectBlock(nil)
+
+        default:
+            if let blockID = store.selectedBlockID, model.blocks.contains(where: { $0.id == blockID }) {
+                selection = .block(id: blockID, panel: .compact)
+            } else {
+                selection = .none
+            }
+        }
+    }
+
+    private func validateSelection(using model: TodayScreenModel) {
+        switch selection {
+        case .none:
+            return
+
+        case let .block(id, _):
+            guard model.blocks.contains(where: { $0.id == id }) else {
+                selection = .none
+                store.selectBlock(nil)
+                pendingCancellationBlockID = nil
+                return
+            }
+
+        case let .openSlot(id, _):
+            guard model.openSlots.contains(where: { $0.id == id }) else {
+                selection = .none
+                pendingCancellationBlockID = nil
+                return
+            }
+        }
     }
 
     private func jumpToCurrent() {
-        // The timeline watches this trigger with `.onChange`, so bumping the integer
-        // is a simple way to request an imperative scroll from an otherwise
-        // declarative view hierarchy.
         let blockID = store.currentActiveBlockID()
         store.selectBlock(blockID)
+        selection = blockID.map { .block(id: $0, panel: .compact) } ?? .none
+        pendingCancellationBlockID = nil
         jumpToCurrentTrigger += 1
     }
 
-    private func handleSelection(_ blockID: UUID?) {
+    private func handleBlockSelection(_ blockID: UUID) {
         store.selectBlock(blockID)
+        pendingCancellationBlockID = nil
+
+        switch selection {
+        case let .block(id, panel) where id == blockID:
+            if panel == .compact {
+                selection = .block(id: blockID, panel: .expanded)
+            }
+
+        default:
+            selection = .block(id: blockID, panel: .compact)
+        }
+    }
+
+    private func handleOpenSlotSelection(_ slotID: UUID) {
+        store.selectBlock(nil)
+        pendingCancellationBlockID = nil
+
+        switch selection {
+        case let .openSlot(id, panel) where id == slotID:
+            if panel == .compact {
+                selection = .openSlot(id: slotID, panel: .expanded)
+            }
+
+        default:
+            selection = .openSlot(id: slotID, panel: .compact)
+        }
+    }
+
+    private func clearSelection() {
+        selection = .none
+        store.selectBlock(nil)
+        pendingCancellationBlockID = nil
+    }
+
+    private func expandSelection() {
+        guard selection.panelState == .compact else { return }
+        selection = selection.withPanel(.expanded)
+    }
+
+    private func collapseSelection() {
+        guard selection.panelState == .expanded else { return }
+        selection = selection.withPanel(.compact)
+    }
+
+    private func beginCreate(in slot: TodayOpenSlotItem) {
+        var draft = BlockDraft.base(
+            startMinute: slot.startMinuteOfDay,
+            endMinute: slot.endMinuteOfDay
+        )
+        draft.title = "New Block"
+        editorSession = BlockEditorSession(
+            title: "New Block",
+            draft: draft,
+            scrollToSavedBlockOnSave: true
+        )
     }
 
     private func beginCreate(from option: TodayAddOption) {
@@ -168,6 +387,7 @@ struct TodayRootView: View {
 
     private func beginEditingBlock(_ blockID: UUID) {
         store.selectBlock(blockID)
+        pendingCancellationBlockID = nil
 
         guard
             let detail = try? store.blockDetailModel(on: store.selectedDate, blockID: blockID),
@@ -176,6 +396,7 @@ struct TodayRootView: View {
             return
         }
 
+        selection = .block(id: blockID, panel: .compact)
         editorSession = BlockEditorSession(
             title: "Edit Block",
             draft: .editing(
@@ -188,10 +409,46 @@ struct TodayRootView: View {
 
     private func handleSavedBlock(_ blockID: UUID, shouldScrollToSavedBlock: Bool) {
         store.selectBlock(blockID)
-        guard shouldScrollToSavedBlock else { return }
+        selection = .block(id: blockID, panel: .compact)
+        pendingCancellationBlockID = nil
 
+        guard shouldScrollToSavedBlock else { return }
         scrollToBlockID = blockID
         scrollToBlockTrigger += 1
+    }
+
+    private func beginCreateOverlay(on blockID: UUID, layerIndex: Int) {
+        editorSession = BlockEditorSession(
+            title: "New Overlay",
+            draft: .overlay(
+                parentBlockID: blockID,
+                layerIndex: layerIndex,
+                parentResolvedRange: resolvedRange(for: blockID)
+            ),
+            scrollToSavedBlockOnSave: true
+        )
+    }
+
+    private func confirmCancellation() {
+        guard let blockID = pendingCancellationBlockID else { return }
+        pendingCancellationBlockID = nil
+        selection = .none
+        store.cancelBlock(on: store.selectedDate, blockID: blockID)
+        store.selectBlock(nil)
+    }
+
+    private func selectParentBlock(from detail: BlockDetailModel) {
+        guard let parentID = detail.parentBlockID else { return }
+        store.selectBlock(parentID)
+        selection = .block(id: parentID, panel: .compact)
+        scrollToBlockID = nil
+    }
+
+    private func selectedBlockDetail(for blockID: UUID) -> BlockDetailModel? {
+        guard let detail = try? store.blockDetailModel(on: store.selectedDate, blockID: blockID) else {
+            return nil
+        }
+        return detail
     }
 
     private func systemImageName(for kind: TodayAddOptionKind) -> String {
@@ -216,9 +473,53 @@ struct TodayRootView: View {
     }
 }
 
+private enum TodayPanelState: Equatable {
+    case compact
+    case expanded
+    case adjustingTime
+}
+
+private enum TodaySelection: Equatable {
+    case none
+    case block(id: UUID, panel: TodayPanelState)
+    case openSlot(id: UUID, panel: TodayPanelState)
+
+    var blockID: UUID? {
+        guard case let .block(id, _) = self else { return nil }
+        return id
+    }
+
+    var openSlotID: UUID? {
+        guard case let .openSlot(id, _) = self else { return nil }
+        return id
+    }
+
+    var panelState: TodayPanelState? {
+        switch self {
+        case .none:
+            return nil
+        case let .block(_, panel), let .openSlot(_, panel):
+            return panel
+        }
+    }
+
+    func withPanel(_ panel: TodayPanelState) -> TodaySelection {
+        switch self {
+        case .none:
+            return .none
+        case let .block(id, _):
+            return .block(id: id, panel: panel)
+        case let .openSlot(id, _):
+            return .openSlot(id: id, panel: panel)
+        }
+    }
+}
+
 private struct TodayTimelineView: View {
     let model: TodayScreenModel
     let selectedBlockID: UUID?
+    let selectedOpenSlotID: UUID?
+    let isAdjustingTime: Bool
     let currentMinute: Int?
     let jumpToCurrentTrigger: Int
     let scrollToBlockID: UUID?
@@ -227,28 +528,29 @@ private struct TodayTimelineView: View {
     let resizeBounds: (UUID) -> BlockResizeBounds?
     let onResizeBlockStart: (UUID, Int) -> Void
     let onResizeBlockEnd: (UUID, Int) -> Void
-    let onCreateBaseInOpenSlot: (Int, Int) -> Void
-    let onSelect: (UUID?) -> Void
-    let onBeginEdit: (UUID) -> Void
+    let onSelectBlock: (UUID) -> Void
+    let onSelectOpenSlot: (UUID) -> Void
+    let onClearSelection: () -> Void
 
     @State private var lastInitialScrollDate: LocalDay?
     @State private var resizePreview: TimelineResizePreview?
 
-    // The timeline uses a manual y-axis scale because time maps to position continuously,
-    // not to "one row per item" like a normal list.
     private let hourHeight: CGFloat = 76
     private let labelWidth: CGFloat = 52
     private let timelineTopInset: CGFloat = 12
     private let trackInset: CGFloat = 12
 
     var body: some View {
-        // `ScrollViewReader` gives imperative scrolling control inside an otherwise
-        // declarative view tree. We use it for "jump to current" and initial focus.
         ScrollViewReader { proxy in
             ScrollView {
                 GeometryReader { geometry in
                     ZStack(alignment: .topLeading) {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture(perform: onClearSelection)
+
                         hourGrid
+
                         if let currentMinute {
                             currentTimeLine(minute: currentMinute, canvasWidth: geometry.size.width)
                         }
@@ -267,12 +569,11 @@ private struct TodayTimelineView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .task(id: model.date) {
-                // `.task(id:)` reruns whenever the ID changes.
-                // That is exactly what we want when the user switches to a different date.
                 guard lastInitialScrollDate != model.date else { return }
                 lastInitialScrollDate = model.date
 
-                if let focusBlockID = model.initialFocusBlockID, let fallbackMinute = currentMinute ?? model.blocks.first(where: { $0.id == focusBlockID })?.startMinuteOfDay {
+                if let focusBlockID = model.initialFocusBlockID,
+                   let fallbackMinute = currentMinute ?? model.blocks.first(where: { $0.id == focusBlockID })?.startMinuteOfDay {
                     scroll(
                         toBlock: focusBlockID,
                         fallbackMinute: fallbackMinute,
@@ -339,6 +640,7 @@ private struct TodayTimelineView: View {
                 .fill(.red)
                 .frame(width: 8, height: 8)
                 .offset(x: labelWidth - 4)
+
             Rectangle()
                 .fill(.red)
                 .frame(height: 2)
@@ -348,8 +650,6 @@ private struct TodayTimelineView: View {
     }
 
     private func timelineBlock(_ node: TodayTimelineNode, canvasWidth: CGFloat) -> some View {
-        // Resizing a parent block's start can visually shift relative descendants.
-        // These helper values compute the temporary on-screen preview positions.
         let startDelta = propagatedStartDelta(
             for: node.block.id,
             timing: timingResolver(node.block.id),
@@ -383,11 +683,11 @@ private struct TodayTimelineView: View {
             resizingBlockID: resizePreview?.blockID,
             resizingEdge: resizePreview?.edge,
             resizePreview: resizePreview,
+            isAdjustingTime: isAdjustingTime,
             onResizeStart: beginResize(for:edge:),
             onResizeChange: updateResizePreview(for:edge:verticalTranslation:),
             onResizeEnd: commitResize(for:edge:),
-            onSelect: onSelect,
-            onBeginEdit: onBeginEdit
+            onSelect: onSelectBlock
         )
         .frame(width: blockWidth, alignment: .leading)
         .offset(x: labelWidth + trackInset, y: y)
@@ -400,7 +700,8 @@ private struct TodayTimelineView: View {
         return TimelineOpenSlotEntry(
             slot: slot,
             hourHeight: hourHeight,
-            onCreateBase: onCreateBaseInOpenSlot
+            isSelected: selectedOpenSlotID == slot.id,
+            onSelect: { onSelectOpenSlot(slot.id) }
         )
         .frame(width: trackWidth, alignment: .leading)
         .offset(x: labelWidth + trackInset, y: y)
@@ -415,9 +716,6 @@ private struct TodayTimelineView: View {
     }
 
     private var rootNodes: [TodayTimelineNode] {
-        // We rebuild a tree from the flat block list on demand.
-        // With Swift value types this is a normal pattern: derive transient structure
-        // during rendering instead of storing multiple mutable representations.
         let childrenByParent = Dictionary(grouping: model.blocks.filter { $0.parentBlockID != nil }) { $0.parentBlockID! }
             .mapValues { $0.sorted(by: timelineNodeSort) }
 
@@ -435,8 +733,6 @@ private struct TodayTimelineView: View {
     }
 
     private var selectedPathIDs: Set<UUID> {
-        // This computes the selected block plus all ancestors so the UI can subtly
-        // highlight the whole active path through the nested overlay tree.
         guard let selectedBlockID else { return [] }
 
         var path = Set([selectedBlockID])
@@ -467,8 +763,6 @@ private struct TodayTimelineView: View {
     }
 
     private func scroll(to minute: Int, anchor: UnitPoint, proxy: ScrollViewProxy, animated: Bool) {
-        // `ScrollViewReader` scrolls to view IDs, not raw pixel offsets.
-        // We therefore map a time minute to the nearest hour-marker view ID.
         let action = {
             proxy.scrollTo(anchorHour(for: minute), anchor: anchor)
         }
@@ -489,8 +783,6 @@ private struct TodayTimelineView: View {
         proxy: ScrollViewProxy,
         animated: Bool
     ) {
-        // Prefer the exact block view when possible. If the block vanished because the
-        // underlying data changed, fall back to an hour marker near the same time.
         let action = {
             if blocksByID[blockID] != nil {
                 proxy.scrollTo(blockID, anchor: anchor)
@@ -519,8 +811,6 @@ private struct TodayTimelineView: View {
     }
 
     private func beginResize(for blockID: UUID, edge: TimelineResizeEdge) {
-        // Gesture code is simpler if we snapshot bounds/current values at gesture start
-        // and then update a lightweight preview struct as the drag changes.
         guard resizePreview?.blockID != blockID || resizePreview?.edge != edge else { return }
         guard let bounds = resizeBounds(blockID) else { return }
 
@@ -572,14 +862,12 @@ private struct TodayTimelineView: View {
             guard resizePreview.proposedStartMinuteOfDay != resizePreview.currentStartMinuteOfDay else {
                 return
             }
-
             onResizeBlockStart(blockID, resizePreview.proposedStartMinuteOfDay)
 
         case .end:
             guard resizePreview.proposedEndMinuteOfDay != resizePreview.currentEndMinuteOfDay else {
                 return
             }
-
             onResizeBlockEnd(blockID, resizePreview.proposedEndMinuteOfDay)
         }
     }
@@ -627,8 +915,6 @@ private func propagatedStartDelta(
     inheritedStartDelta: Int,
     resizePreview: TimelineResizePreview?
 ) -> Int {
-    // Relative children move with a parent's dragged start edge during preview.
-    // Absolute-timed descendants keep their own absolute position.
     if let resizePreview, resizePreview.blockID == blockID, resizePreview.edge == .start {
         return resizePreview.proposedStartMinuteOfDay - resizePreview.currentStartMinuteOfDay
     }
@@ -650,8 +936,6 @@ private func displayedStartMinute(
     startDelta: Int,
     resizePreview: TimelineResizePreview?
 ) -> Int {
-    // The block currently being dragged reads its own preview directly.
-    // Other blocks either stay fixed or inherit an ancestor delta.
     if let resizePreview, resizePreview.blockID == blockID {
         return resizePreview.proposedStartMinuteOfDay
     }
@@ -686,18 +970,16 @@ private struct TimelineBlockCard: View {
     let resizingBlockID: UUID?
     let resizingEdge: TimelineResizeEdge?
     let resizePreview: TimelineResizePreview?
+    let isAdjustingTime: Bool
     let onResizeStart: (UUID, TimelineResizeEdge) -> Void
     let onResizeChange: (UUID, TimelineResizeEdge, CGFloat) -> Void
     let onResizeEnd: (UUID, TimelineResizeEdge) -> Void
-    let onSelect: (UUID?) -> Void
-    let onBeginEdit: (UUID) -> Void
+    let onSelect: (UUID) -> Void
 
     private let minimumHeight: CGFloat = 52
     private let childInset: CGFloat = 16
     private let childGap: CGFloat = 8
     private let maximumVerticalGap: CGFloat = 3
-    private let resizeHandleHitHeight: CGFloat = 24
-    private let resizeHandleEdgePadding: CGFloat = 8
 
     private var block: TimelineBlockItem { node.block }
 
@@ -719,6 +1001,10 @@ private struct TimelineBlockCard: View {
 
     private var isResizing: Bool {
         resizingBlockID == block.id
+    }
+
+    private var showsResizeHandles: Bool {
+        isSelected && isAdjustingTime
     }
 
     private var nodeStartDelta: Int {
@@ -747,10 +1033,6 @@ private struct TimelineBlockCard: View {
         outerFrameHeight - visualVerticalInset * 2
     }
 
-    private var badgeTitle: String {
-        block.layerIndex.timelineLayerBadgeTitle
-    }
-
     private var taskSummary: String? {
         guard block.incompleteTaskCount > 0 else {
             return nil
@@ -767,6 +1049,10 @@ private struct TimelineBlockCard: View {
         min(cardHeight, headerReservedHeight + 22)
     }
 
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
+    }
+
     private var headerContent: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 8) {
@@ -776,13 +1062,6 @@ private struct TimelineBlockCard: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 Spacer(minLength: 8)
-
-                Text(badgeTitle)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(style.badgeForeground)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(style.badgeBackground, in: Capsule())
             }
 
             Text("\(displayedStartMinuteOfDay.formattedTime) - \(displayedEndMinuteOfDay.formattedTime)")
@@ -809,7 +1088,7 @@ private struct TimelineBlockCard: View {
                 endPoint: .bottom
             )
             .frame(height: headerBackdropHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(cardShape)
         }
         .allowsHitTesting(false)
     }
@@ -821,9 +1100,7 @@ private struct TimelineBlockCard: View {
 
             ZStack(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {
-                    // Nested overlays are drawn recursively: a card renders its children
-                    // by embedding more `TimelineBlockCard` views inside itself.
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    cardShape
                         .fill(backgroundColor)
 
                     selectionSurface
@@ -839,23 +1116,20 @@ private struct TimelineBlockCard: View {
                     headerContent
                         .zIndex(1)
 
-                    VStack {
-                        resizeHandle(edge: .start)
-                            .padding(.top, 8)
-                        Spacer(minLength: 0)
-                        resizeHandle(edge: .end)
+                    if showsResizeHandles {
+                        resizeHandleOverlay
+                            .zIndex(2)
                     }
-                    .padding(.bottom, 8)
-                    .zIndex(2)
                 }
+                .clipShape(cardShape)
                 .frame(width: geometry.size.width, height: cardHeight, alignment: .topLeading)
                 .offset(y: visualVerticalInset)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(borderColor, lineWidth: borderWidth)
+                    cardShape
+                        .strokeBorder(borderColor, lineWidth: borderWidth)
                 )
                 .shadow(
-                    color: (isSelected || isResizing) ? style.accent.opacity(0.18) : .clear,
+                    color: (isSelected || isResizing) ? style.accent.opacity(0.16) : .clear,
                     radius: 10,
                     y: 4
                 )
@@ -866,8 +1140,6 @@ private struct TimelineBlockCard: View {
     }
 
     private var backgroundColor: Color {
-        // Appearance is derived from semantic state rather than mutated imperatively.
-        // That makes selection/resizing visuals deterministic and easy to reason about.
         if isResizing {
             return style.strongSurface
         }
@@ -893,19 +1165,15 @@ private struct TimelineBlockCard: View {
         }
 
         if isSelectedAncestor {
-            return style.accent.opacity(0.45)
+            return style.accent.opacity(0.42)
         }
 
         return style.border
     }
 
     private var borderWidth: CGFloat {
-        if isResizing {
-            return 2.5
-        }
-
-        if isSelected {
-            return 2.5
+        if isResizing || isSelected {
+            return 2.2
         }
 
         if isSelectedAncestor {
@@ -916,9 +1184,6 @@ private struct TimelineBlockCard: View {
     }
 
     private func childYOffset(for child: TodayTimelineNode, childHeight: CGFloat) -> CGFloat {
-        // Children should remain close to their true time position, but the parent
-        // header also needs breathing room so nested cards do not visually collide
-        // with the title area.
         let childRange = childDisplayedRange(of: child)
         let relative = CGFloat(childRange.startMinuteOfDay - displayedStartMinuteOfDay) / 60.0 * hourHeight
         let desiredTop = headerReservedHeight + childGap
@@ -950,11 +1215,11 @@ private struct TimelineBlockCard: View {
             resizingBlockID: resizingBlockID,
             resizingEdge: resizingEdge,
             resizePreview: resizePreview,
+            isAdjustingTime: isAdjustingTime,
             onResizeStart: onResizeStart,
             onResizeChange: onResizeChange,
             onResizeEnd: onResizeEnd,
-            onSelect: onSelect,
-            onBeginEdit: onBeginEdit
+            onSelect: onSelect
         )
         .frame(width: width)
         .offset(
@@ -964,9 +1229,6 @@ private struct TimelineBlockCard: View {
     }
 
     private func childDisplayedRange(of child: TodayTimelineNode) -> (startMinuteOfDay: Int, endMinuteOfDay: Int) {
-        // Recursive rendering asks the same question at every level:
-        // "given the current preview delta from my ancestors, where should this child
-        // appear right now?"
         let startDelta = propagatedStartDelta(
             for: child.block.id,
             timing: timingResolver(child.block.id),
@@ -992,54 +1254,40 @@ private struct TimelineBlockCard: View {
 
     private var selectionSurface: some View {
         Color.clear
-            .padding(.top, resizeHandleHitHeight + resizeHandleEdgePadding)
-            .padding(.bottom, resizeHandleHitHeight + resizeHandleEdgePadding)
-            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .contentShape(cardShape)
             .onTapGesture {
-                selectBlock()
+                onSelect(block.id)
             }
-            .simultaneousGesture(editGesture)
     }
 
-    private func selectBlock() {
-        // Parent cards need explicit tap targets because nested child cards and resize
-        // handles sit above the container and can otherwise swallow the selection tap.
-        onSelect(block.id)
-    }
+    private var resizeHandleOverlay: some View {
+        VStack {
+            resizeHandle(edge: .start)
+                .padding(.top, 8)
 
-    private var editGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.6, maximumDistance: 12)
-            .onEnded { _ in
-                selectBlock()
-                onBeginEdit(block.id)
-            }
+            Spacer(minLength: 0)
+
+            resizeHandle(edge: .end)
+                .padding(.bottom, 8)
+        }
+        .padding(.horizontal, 10)
     }
 
     private func resizeHandle(edge: TimelineResizeEdge) -> some View {
-        Color.clear
-            .frame(height: resizeHandleHitHeight)
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-            .highPriorityGesture(resizeGesture(edge: edge))
-            .accessibilityLabel(edge == .start ? "Resize block start" : "Resize block end")
+        TimelineResizeHandle(
+            label: edge == .start ? "Start" : "End",
+            systemImage: edge == .start ? "arrow.up" : "arrow.down",
+            tint: style.accent
+        )
+        .gesture(resizeGesture(edge: edge))
+        .accessibilityLabel(edge == .start ? "Adjust block start time" : "Adjust block end time")
     }
 
     private func resizeGesture(edge: TimelineResizeEdge) -> some Gesture {
-        // `sequenced(before:)` lets us model "long press, then drag" as one gesture.
-        // This avoids accidental resizes during normal scrolling/tapping.
-        LongPressGesture(minimumDuration: 0.2, maximumDistance: 12)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
-                switch value {
-                case .first(true):
-                    onResizeStart(block.id, edge)
-
-                case .second(true, let drag?):
-                    onResizeChange(block.id, edge, drag.translation.height)
-
-                default:
-                    break
-                }
+                onResizeStart(block.id, edge)
+                onResizeChange(block.id, edge, value.translation.height)
             }
             .onEnded { _ in
                 onResizeEnd(block.id, edge)
@@ -1047,45 +1295,487 @@ private struct TimelineBlockCard: View {
     }
 }
 
+private struct TimelineResizeHandle: View {
+    let label: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+            Text(label)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(tint.opacity(0.7), lineWidth: 1)
+        )
+    }
+}
+
 private struct TimelineOpenSlotEntry: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
     let slot: TodayOpenSlotItem
     let hourHeight: CGFloat
-    let onCreateBase: (Int, Int) -> Void
+    let isSelected: Bool
+    let onSelect: () -> Void
 
     private var slotHeight: CGFloat {
         CGFloat(slot.durationMinutes) / 60.0 * hourHeight
     }
 
     private var showsTimeRange: Bool {
-        slotHeight >= 64
+        slotHeight >= 54
+    }
+
+    private var style: LayerVisualStyle {
+        LayerVisualStyle.forBlock(
+            layerIndex: 0,
+            isBlank: true,
+            preset: tintPreset
+        )
     }
 
     var body: some View {
-        Color.clear
-            .frame(height: max(slotHeight, 1))
-            .overlay(alignment: showsTimeRange ? .center : .topLeading) {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(isSelected ? style.surface.opacity(0.55) : style.surface.opacity(0.18))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? style.accent.opacity(0.88) : style.border.opacity(0.55),
+                        style: StrokeStyle(lineWidth: isSelected ? 1.6 : 1, dash: [6, 6])
+                    )
+            )
+            .frame(height: max(slotHeight, 10))
+            .overlay(alignment: showsTimeRange ? .leading : .center) {
                 HStack(spacing: 8) {
-                    Button {
-                        onCreateBase(slot.startMinuteOfDay, slot.endMinuteOfDay)
-                    } label: {
-                        if showsTimeRange {
-                            Label("Add Base", systemImage: "plus.circle.fill")
-                        } else {
-                            Image(systemName: "plus.circle.fill")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(showsTimeRange ? .regular : .small)
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundStyle(isSelected ? style.accent : .secondary)
 
                     if showsTimeRange {
-                        Text("\(slot.startMinuteOfDay.formattedTime) - \(slot.endMinuteOfDay.formattedTime)")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Open Time")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            Text("\(slot.startMinuteOfDay.formattedTime) - \(slot.endMinuteOfDay.formattedTime)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary)
+                        }
                     }
                 }
-                .padding(.top, showsTimeRange ? 0 : 4)
-                .padding(.leading, 8)
+                .padding(.horizontal, 10)
             }
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .onTapGesture(perform: onSelect)
+    }
+}
+
+private struct TodayDockedInspector<Content: View>: View {
+    let panelState: TodayPanelState
+    let onExpand: () -> Void
+    let onCollapse: () -> Void
+    let onDismiss: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    private var allowsPanelToggle: Bool {
+        panelState != .adjustingTime
+    }
+
+    private var showsDismiss: Bool {
+        panelState != .adjustingTime
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ZStack(alignment: .topTrailing) {
+                if allowsPanelToggle {
+                    Button(action: togglePanel) {
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.34))
+                            .frame(width: 42, height: 5)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(panelState == .compact ? "Expand inspector" : "Collapse inspector")
+                } else {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.34))
+                        .frame(width: 42, height: 5)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+
+                if showsDismiss {
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            content()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.12), radius: 18, y: 6)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .simultaneousGesture(panelDragGesture)
+    }
+
+    private var panelDragGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onEnded { value in
+                guard allowsPanelToggle else { return }
+
+                if value.translation.height < -28 {
+                    onExpand()
+                } else if value.translation.height > 32 {
+                    onCollapse()
+                }
+            }
+    }
+
+    private func togglePanel() {
+        switch panelState {
+        case .compact:
+            onExpand()
+        case .expanded:
+            onCollapse()
+        case .adjustingTime:
+            break
+        }
+    }
+}
+
+private struct TodayBlockInspectorView: View {
+    let detail: BlockDetailModel
+    let panelState: TodayPanelState
+    let onSelectParent: () -> Void
+    let onEdit: () -> Void
+    let onExpand: () -> Void
+    let onAdjustTime: () -> Void
+    let onFinishAdjusting: () -> Void
+    let onCancelAdjusting: () -> Void
+    let onAddOverlay: () -> Void
+    let onRequestCancellation: () -> Void
+
+    var body: some View {
+        switch panelState {
+        case .compact:
+            compactBody
+
+        case .expanded:
+            expandedBody
+
+        case .adjustingTime:
+            adjustingBody
+        }
+    }
+
+    private var compactBody: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
+
+            if detail.parentBlockTitle != nil {
+                parentButton
+            }
+
+            HStack(spacing: 10) {
+                Button("Edit", action: onEdit)
+                    .buttonStyle(.borderedProminent)
+
+                Button("Details", action: onExpand)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var expandedBody: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            header
+
+            if detail.parentBlockTitle != nil {
+                parentButton
+            }
+
+            TodayInspectorSection(title: "Note", systemImage: "note.text") {
+                if let note = detail.note, !note.isEmpty {
+                    Text(note)
+                        .font(.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("No note")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            TodayInspectorSection(title: "Checklist", systemImage: "checklist") {
+                if detail.tasks.isEmpty {
+                    Text("No checklist items")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(detail.tasks) { task in
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(task.isCompleted ? Color.accentColor : Color.secondary)
+                                    .padding(.top, 1)
+
+                                Text(task.title)
+                                    .strikethrough(task.isCompleted, color: .secondary)
+                                    .foregroundStyle(task.isCompleted ? .secondary : .primary)
+
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                }
+            }
+
+            TodayInspectorSection(title: "Reminders", systemImage: "bell") {
+                if detail.reminders.isEmpty {
+                    Text("No reminders")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(detail.reminders) { reminder in
+                            Label(reminderSummary(reminder), systemImage: "bell.badge")
+                                .font(.body)
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Actions")
+                    .font(.headline)
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        Button("Edit", action: onEdit)
+                            .buttonStyle(.borderedProminent)
+
+                        Button("Adjust Time", action: onAdjustTime)
+                            .buttonStyle(.bordered)
+
+                        Button("Add Overlay", action: onAddOverlay)
+                            .buttonStyle(.bordered)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button("Edit", action: onEdit)
+                            .buttonStyle(.borderedProminent)
+
+                        Button("Adjust Time", action: onAdjustTime)
+                            .buttonStyle(.bordered)
+
+                        Button("Add Overlay", action: onAddOverlay)
+                            .buttonStyle(.bordered)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Danger Zone")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Button("Cancel Block", role: .destructive, action: onRequestCancellation)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var adjustingBody: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
+
+            Text("Drag the visible top and bottom handles on the selected block. Scrolling and ordinary taps will no longer resize the card.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button("Done", action: onFinishAdjusting)
+                    .buttonStyle(.borderedProminent)
+
+                Button("Cancel", action: onCancelAdjusting)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(detail.title)
+                .font(.title3.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("\(detail.startMinuteOfDay.formattedTime) - \(detail.endMinuteOfDay.formattedTime)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var parentButton: some View {
+        Button(action: onSelectParent) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.turn.up.left")
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Parent Block")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text(detail.parentBlockTitle ?? "")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func reminderSummary(_ reminder: ReminderRule) -> String {
+        if let preset = ReminderPreset(rule: reminder) {
+            return preset.title
+        }
+
+        switch reminder.triggerMode {
+        case .atStart:
+            return "At start"
+        case .beforeStart:
+            return "\(reminder.offsetMinutes) min before"
+        }
+    }
+}
+
+private struct TodayOpenSlotInspectorView: View {
+    let slot: TodayOpenSlotItem
+    let panelState: TodayPanelState
+    let onAddBlock: () -> Void
+    let onExpand: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Open Time")
+                    .font(.headline)
+
+                Text("\(slot.startMinuteOfDay.formattedTime) - \(slot.endMinuteOfDay.formattedTime)")
+                    .font(.title3.weight(.semibold))
+
+                Text(durationText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if panelState == .expanded {
+                Text("This gap is free. Add a block with the full range as a starting point, then fine-tune it in the editor if needed.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 10) {
+                Button("Add Block", action: onAddBlock)
+                    .buttonStyle(.borderedProminent)
+
+                if panelState == .compact {
+                    Button("Details", action: onExpand)
+                        .buttonStyle(.bordered)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var durationText: String {
+        let hours = slot.durationMinutes / 60
+        let minutes = slot.durationMinutes % 60
+
+        switch (hours, minutes) {
+        case (0, let minutes):
+            return "\(minutes) min available"
+        case (let hours, 0):
+            return hours == 1 ? "1 hour available" : "\(hours) hours available"
+        default:
+            return "\(hours)h \(minutes)m available"
+        }
+    }
+}
+
+private struct TodayUnavailableInspectorView: View {
+    let title: String
+    let startMinuteOfDay: Int
+    let endMinuteOfDay: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+
+            Text("\(startMinuteOfDay.formattedTime) - \(endMinuteOfDay.formattedTime)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Text("This block is no longer available in the current day plan.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct TodayInspectorSection<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -1104,8 +1794,6 @@ private struct TodayBlockEditorPresenter: View {
     let onSaveSuccess: (UUID, Bool) -> Void
 
     var body: some View {
-        // This adapter translates generic form output (`BlockDraft`) into concrete
-        // store mutations. Parent views stay focused on layout instead of save logic.
         BlockEditorSheet(title: session.title, draft: session.draft) { draft in
             do {
                 let savedBlockID = try store.saveBlockDraft(draft, for: store.selectedDate)
@@ -1147,6 +1835,8 @@ private struct TodayBlockEditorPresenter: View {
     TodayTimelineView(
         model: model,
         selectedBlockID: model.selectedBlock?.id,
+        selectedOpenSlotID: nil,
+        isAdjustingTime: false,
         currentMinute: 9 * 60 + 30,
         jumpToCurrentTrigger: 0,
         scrollToBlockID: nil,
@@ -1155,9 +1845,9 @@ private struct TodayBlockEditorPresenter: View {
         resizeBounds: { _ in nil },
         onResizeBlockStart: { _, _ in },
         onResizeBlockEnd: { _, _ in },
-        onCreateBaseInOpenSlot: { _, _ in },
-        onSelect: { _ in },
-        onBeginEdit: { _ in }
+        onSelectBlock: { _ in },
+        onSelectOpenSlot: { _ in },
+        onClearSelection: {}
     )
 }
 
@@ -1166,6 +1856,8 @@ private struct TodayBlockEditorPresenter: View {
     TodayTimelineView(
         model: model,
         selectedBlockID: nil,
+        selectedOpenSlotID: nil,
+        isAdjustingTime: false,
         currentMinute: nil,
         jumpToCurrentTrigger: 0,
         scrollToBlockID: nil,
@@ -1174,9 +1866,9 @@ private struct TodayBlockEditorPresenter: View {
         resizeBounds: { _ in nil },
         onResizeBlockStart: { _, _ in },
         onResizeBlockEnd: { _, _ in },
-        onCreateBaseInOpenSlot: { _, _ in },
-        onSelect: { _ in },
-        onBeginEdit: { _ in }
+        onSelectBlock: { _ in },
+        onSelectOpenSlot: { _ in },
+        onClearSelection: {}
     )
 }
 
@@ -1192,6 +1884,8 @@ private struct TodayBlockEditorPresenter: View {
     TodayTimelineView(
         model: model,
         selectedBlockID: model.selectedBlock?.id,
+        selectedOpenSlotID: nil,
+        isAdjustingTime: false,
         currentMinute: nil,
         jumpToCurrentTrigger: 0,
         scrollToBlockID: nil,
@@ -1200,8 +1894,8 @@ private struct TodayBlockEditorPresenter: View {
         resizeBounds: { _ in nil },
         onResizeBlockStart: { _, _ in },
         onResizeBlockEnd: { _, _ in },
-        onCreateBaseInOpenSlot: { _, _ in },
-        onSelect: { _ in },
-        onBeginEdit: { _ in }
+        onSelectBlock: { _ in },
+        onSelectOpenSlot: { _ in },
+        onClearSelection: {}
     )
 }

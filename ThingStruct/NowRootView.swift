@@ -12,34 +12,51 @@ struct NowRootView: View {
     var body: some View {
         NavigationStack {
             TimelineView(.periodic(from: .now, by: 60)) { context in
-                // Every minute, `TimelineView` re-runs this subtree with a new `context.date`.
-                RootScreenContainer(
-                    isLoaded: store.isLoaded,
-                    loadingTitle: "Loading Now",
-                    loadingSystemImage: "clock",
-                    loadingDescription: "Refreshing your active block and task chain.",
-                    errorTitle: "Unable to Load Now",
-                    retry: store.reload,
-                    load: {
-                        try store.nowScreenModel(at: context.date)
-                    }
-                ) { model in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                            NowNotesSectionView(sections: model.noteSections)
-                            NowTasksSectionView(
-                                sections: model.taskSections,
-                                statusMessage: model.statusMessage,
-                                activeChain: model.activeChain
-                            ) { blockID, taskID in
-                                store.toggleTask(on: model.date, blockID: blockID, taskID: taskID)
+                let localDay = LocalDay(date: context.date)
+
+                Group {
+                    if !store.isLoaded {
+                        ScreenLoadingView(
+                            title: "Loading Now",
+                            systemImage: "clock",
+                            description: "Refreshing your active block and task chain."
+                        )
+                    } else if store.requiresTemplateSelection(for: localDay) {
+                        TodayTemplateChooserView(date: localDay)
+                    } else {
+                        // Every minute, `TimelineView` re-runs this subtree with a new `context.date`.
+                        RootScreenContainer(
+                            isLoaded: true,
+                            loadingTitle: "Loading Now",
+                            loadingSystemImage: "clock",
+                            loadingDescription: "Refreshing your active block and task chain.",
+                            errorTitle: "Unable to Load Now",
+                            retry: store.reload,
+                            load: {
+                                try store.nowScreenModel(at: context.date)
                             }
+                        ) { model in
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    NowCurrentHeroView(model: model)
+                                    NowTasksSectionView(
+                                        sections: model.taskSections,
+                                        statusMessage: model.statusMessage,
+                                        activeChain: model.activeChain,
+                                        currentBlockTitle: model.currentBlockTitle,
+                                        taskSourceTitle: model.taskSourceTitle
+                                    ) { blockID, taskID in
+                                        store.toggleTask(on: model.date, blockID: blockID, taskID: taskID)
+                                    }
+                                    NowNotesSectionView(sections: model.noteSections)
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.top, 16)
+                                .padding(.bottom, 28)
+                            }
+                            .navigationTitle(model.date.nowNavigationTitle)
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 16)
-                        .padding(.bottom, 28)
                     }
-                    .navigationTitle(model.date.nowNavigationTitle)
                 }
             }
             .navigationTitle(LocalDay.today().nowNavigationTitle)
@@ -48,16 +65,105 @@ struct NowRootView: View {
     }
 }
 
+private struct NowCurrentHeroView: View {
+    @Environment(\.thingStructTintPreset) private var tintPreset
+
+    let model: NowScreenModel
+
+    private var currentItem: NowChainItem? {
+        model.activeChain.first(where: \.isCurrent) ?? model.activeChain.first
+    }
+
+    private var remainingTaskCount: Int {
+        model.taskSections
+            .flatMap(\.tasks)
+            .filter { !$0.isCompleted }
+            .count
+    }
+
+    private var style: LayerVisualStyle {
+        guard let currentItem else {
+            return LayerVisualStyle.forBlock(layerIndex: 0, isBlank: true, preset: tintPreset)
+        }
+
+        return LayerVisualStyle.forBlock(
+            layerIndex: currentItem.layerIndex,
+            isBlank: currentItem.isBlank,
+            preset: tintPreset
+        )
+    }
+
+    private var heroTitle: String {
+        if let currentItem, currentItem.isBlank {
+            return "Open Time"
+        }
+
+        return model.currentBlockTitle ?? currentItem?.title ?? "No plan yet"
+    }
+
+    private var secondaryMessage: String {
+        if let currentBlockTitle = model.currentBlockTitle,
+           let taskSourceTitle = model.taskSourceTitle,
+           currentBlockTitle != taskSourceTitle {
+            return "Tasks are currently inherited from \(taskSourceTitle)."
+        }
+
+        return model.statusMessage ?? "Focus on the next clear action."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 10) {
+                NowBadge(
+                    title: currentItem?.isBlank == true ? "Open Time" : "Current",
+                    background: style.badgeBackground,
+                    foreground: style.badgeForeground
+                )
+
+                Spacer(minLength: 12)
+
+                if remainingTaskCount > 0 {
+                    Text(remainingTaskCount == 1 ? "1 remaining" : "\(remainingTaskCount) remaining")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(heroTitle)
+                    .font(.system(.title2, design: .rounded).weight(.bold))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let currentItem {
+                    Text("\(currentItem.startMinuteOfDay.formattedTime) - \(currentItem.endMinuteOfDay.formattedTime)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(secondaryMessage)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(style.strongSurface, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(style.accent.opacity(0.26), lineWidth: 1.5)
+        )
+    }
+}
+
 private struct NowNotesSectionView: View {
     let sections: [NowNoteSection]
 
     var body: some View {
-        // SwiftUI encourages composing many tiny views like this.
-        // Think of them as cheap rendering functions with local structure.
         if !sections.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Notes")
-                    .font(.title2.weight(.semibold))
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Context")
+                    .font(.headline.weight(.semibold))
                     .foregroundStyle(.primary)
 
                 ForEach(sections) { section in
@@ -75,6 +181,8 @@ private struct NowTasksSectionView: View {
     let sections: [NowTaskSection]
     let statusMessage: String?
     let activeChain: [NowChainItem]
+    let currentBlockTitle: String?
+    let taskSourceTitle: String?
     let onToggle: (UUID, UUID) -> Void
 
     private var remainingTaskCount: Int {
@@ -102,11 +210,9 @@ private struct NowTasksSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // The task section is intentionally derived from a presentation model,
-            // not from raw `TimeBlock` values, so it can focus purely on rendering.
             HStack(alignment: .firstTextBaseline) {
                 Text("Tasks")
-                    .font(.title2.weight(.semibold))
+                    .font(.title3.weight(.semibold))
 
                 Spacer()
 
@@ -115,6 +221,13 @@ private struct NowTasksSectionView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            if let currentBlockTitle, let taskSourceTitle, currentBlockTitle != taskSourceTitle {
+                Text("Current: \(currentBlockTitle). Tasks from: \(taskSourceTitle).")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if sections.isEmpty {
@@ -178,10 +291,10 @@ private struct NowNoteCard: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(style.surface.opacity(0.78), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(style.surface.opacity(0.62), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(style.border.opacity(0.42), lineWidth: 1)
+                .stroke(style.border.opacity(0.28), lineWidth: 1)
         )
     }
 }
@@ -238,9 +351,9 @@ private struct NowTaskCard: View {
 
                 Spacer(minLength: 12)
 
-                if section.isCurrent {
+                if section.isTaskSource {
                     NowBadge(
-                        title: "Current",
+                        title: "Focus",
                         background: style.badgeBackground,
                         foreground: style.badgeForeground
                     )
@@ -297,9 +410,9 @@ private struct NowTaskCard: View {
 
             Spacer(minLength: 12)
 
-            if section.isCurrent {
+            if section.isTaskSource {
                 NowBadge(
-                    title: "Current",
+                    title: "Focus",
                     background: style.badgeBackground,
                     foreground: style.badgeForeground
                 )
@@ -498,6 +611,8 @@ private enum NowPreviewFactory {
             sections: model.taskSections,
             statusMessage: model.statusMessage,
             activeChain: model.activeChain,
+            currentBlockTitle: model.currentBlockTitle,
+            taskSourceTitle: model.taskSourceTitle,
             onToggle: { _, _ in }
         )
         .padding(20)
@@ -529,6 +644,8 @@ private enum NowPreviewFactory {
             sections: model.taskSections,
             statusMessage: model.statusMessage,
             activeChain: model.activeChain,
+            currentBlockTitle: model.currentBlockTitle,
+            taskSourceTitle: model.taskSourceTitle,
             onToggle: { _, _ in }
         )
         .padding(20)

@@ -245,9 +245,28 @@ extension ThingStructDocumentRepository {
     }
 
     func systemNowSnapshot(at date: Date) throws -> ThingStructSystemNowSnapshot {
+        let localDay = LocalDay(date: date)
+        let document = try preparedDocument(at: date)
+
+        if try requiresTemplateSelection(in: document, for: localDay, today: localDay) {
+            return ThingStructSystemNowSnapshot(
+                date: localDay,
+                minuteOfDay: date.minuteOfDay,
+                currentBlock: nil,
+                activeBlocks: [],
+                topTask: nil,
+                remainingTaskCount: 0,
+                statusMessage: "Choose today’s template"
+            )
+        }
+
         // 先把 document 映射成 `NowScreenModel`，再映射成系统快照。
         // 这说明系统表面和页面其实共用了同一份“当前链路”理解。
-        let now = try preparedNowScreenModel(at: date)
+        let now = try ThingStructPresentation.nowScreenModel(
+            document: document,
+            date: localDay,
+            minuteOfDay: date.minuteOfDay
+        )
         return systemNowSnapshot(from: now)
     }
 
@@ -271,7 +290,28 @@ extension ThingStructDocumentRepository {
     }
 
     func liveActivitySnapshot(at date: Date) throws -> ThingStructSystemLiveActivitySnapshot {
-        let now = try preparedNowScreenModel(at: date)
+        let localDay = LocalDay(date: date)
+        let document = try preparedDocument(at: date)
+
+        if try requiresTemplateSelection(in: document, for: localDay, today: localDay) {
+            return ThingStructSystemLiveActivitySnapshot(
+                date: localDay,
+                minuteOfDay: date.minuteOfDay,
+                currentBlock: nil,
+                displayBlock: nil,
+                displayTask: nil,
+                displayNote: nil,
+                displaySourceBlockTitle: nil,
+                remainingTaskCount: 0,
+                statusMessage: "Choose today’s template"
+            )
+        }
+
+        let now = try ThingStructPresentation.nowScreenModel(
+            document: document,
+            date: localDay,
+            minuteOfDay: date.minuteOfDay
+        )
         return liveActivitySnapshot(from: now)
     }
 
@@ -445,12 +485,21 @@ extension ThingStructDocumentRepository {
             return (document, false)
         }
 
+        if try requiresTemplateSelection(
+            in: document,
+            for: date,
+            today: LocalDay(date: generatedAt)
+        ) {
+            return (document, false)
+        }
+
         let dayPlan = try TemplateEngine.ensureMaterializedDayPlan(
             for: date,
             existingDayPlans: document.dayPlans,
             savedTemplates: document.savedTemplates,
             weekdayRules: document.weekdayRules,
             overrides: document.overrides,
+            daySelections: document.daySelections,
             generatedAt: generatedAt
         )
 
@@ -469,7 +518,9 @@ extension ThingStructDocumentRepository {
         from now: NowScreenModel
     ) -> ThingStructSystemTaskReference? {
         let prioritizedSections: [NowTaskSection]
-        if let current = now.taskSections.first(where: \.isCurrent) {
+        if let taskSource = now.taskSections.first(where: \.isTaskSource) {
+            prioritizedSections = [taskSource] + now.taskSections.filter { $0.id != taskSource.id }
+        } else if let current = now.taskSections.first(where: \.isCurrent) {
             prioritizedSections = [current] + now.taskSections.filter { $0.id != current.id }
         } else {
             prioritizedSections = now.taskSections
@@ -587,5 +638,18 @@ extension ThingStructDocumentRepository {
             return lhs.order < rhs.order
         }
         return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    private func requiresTemplateSelection(
+        in document: ThingStructDocument,
+        for date: LocalDay,
+        today: LocalDay
+    ) throws -> Bool {
+        try TemplateEngine.requiresExplicitTemplateSelection(
+            for: date,
+            today: today,
+            existingDayPlans: document.dayPlans,
+            daySelections: document.daySelections
+        )
     }
 }

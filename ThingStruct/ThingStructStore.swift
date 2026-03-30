@@ -12,6 +12,11 @@ enum RootTab: Hashable {
     case library
 }
 
+enum DayTemplateChoiceCommandResult: Equatable {
+    case applied
+    case requiresConfirmation
+}
+
 // `ThingStructStore` 是整个 app 的 UI 状态中枢。
 //
 // 如果你来自 C++，可以把它理解成下面三者的混合体：
@@ -105,12 +110,17 @@ final class ThingStructStore {
     // 如果当天还没有 plan，但模板规则能推导出一个，就在这里生成。
     func ensureMaterialized(for date: LocalDay) {
         do {
+            guard shouldAutoMaterialize(for: date) else {
+                return
+            }
+
             let materialized = try TemplateEngine.ensureMaterializedDayPlan(
                 for: date,
                 existingDayPlans: document.dayPlans,
                 savedTemplates: document.savedTemplates,
                 weekdayRules: document.weekdayRules,
-                overrides: document.overrides
+                overrides: document.overrides,
+                daySelections: document.daySelections
             )
 
             if document.dayPlan(for: date) == nil {
@@ -167,6 +177,26 @@ final class ThingStructStore {
 
     func showTemplates() {
         openLibrary(destination: .templates)
+    }
+
+    func requiresTemplateSelection(
+        for date: LocalDay,
+        today: LocalDay = .today()
+    ) -> Bool {
+        (try? TemplateEngine.requiresExplicitTemplateSelection(
+            for: date,
+            today: today,
+            existingDayPlans: document.dayPlans,
+            daySelections: document.daySelections
+        )) ?? false
+    }
+
+    func todayTemplateChooserModel(for date: LocalDay? = nil) throws -> DayTemplateChooserModel {
+        let resolvedDate = date ?? LocalDay.today()
+        return try ThingStructPresentation.templatesScreenModel(
+            document: document,
+            referenceDay: resolvedDate
+        ).todayChooser
     }
 
     func applyTintPreset(_ preset: AppTintPreset) {
@@ -501,6 +531,40 @@ final class ThingStructStore {
         }
     }
 
+    func chooseTemplate(
+        for date: LocalDay,
+        templateID: UUID?,
+        source: DayTemplateSelectionSource,
+        forceReplace: Bool = false
+    ) throws -> DayTemplateChoiceCommandResult {
+        let outcome = try TemplateEngine.chooseTemplate(
+            for: date,
+            templateID: templateID,
+            source: source,
+            existingDayPlans: document.dayPlans,
+            savedTemplates: document.savedTemplates,
+            selectedAt: .now,
+            forceReplace: forceReplace
+        )
+
+        switch outcome {
+        case .requiresForceReplace:
+            return .requiresConfirmation
+
+        case let .applied(selection, dayPlan):
+            document.daySelections.removeAll { $0.date == date }
+            document.daySelections.append(selection)
+            upsert(dayPlan: dayPlan)
+
+            if selectedDate == date {
+                selectedBlockID = nil
+            }
+
+            try persistDocument()
+            return .applied
+        }
+    }
+
     func assignWeekday(_ weekday: Weekday, to templateID: UUID?) {
         // 这里采用“先删旧值，再写新值”的方式维持 weekday -> template 的 1:1 映射。
         document.weekdayRules.removeAll { $0.weekday == weekday }
@@ -585,7 +649,8 @@ final class ThingStructStore {
                 existingDayPlans: document.dayPlans,
                 savedTemplates: document.savedTemplates,
                 weekdayRules: document.weekdayRules,
-                overrides: document.overrides
+                overrides: document.overrides,
+                daySelections: document.daySelections
             )
             if selectedDate == date {
                 selectedBlockID = nil
@@ -605,6 +670,7 @@ final class ThingStructStore {
                 savedTemplates: document.savedTemplates,
                 weekdayRules: document.weekdayRules,
                 overrides: document.overrides,
+                daySelections: document.daySelections,
                 generatedAt: generatedAt
             )
             if selectedDate == date {
@@ -658,6 +724,10 @@ final class ThingStructStore {
         // 文档写盘后，统一走一个“文档已变更”钩子，刷新所有系统表面。
         try documentRepository.save(document)
         documentDidChange()
+    }
+
+    private func shouldAutoMaterialize(for date: LocalDay) -> Bool {
+        !requiresTemplateSelection(for: date)
     }
 
     // MARK: Persistence & System Sync

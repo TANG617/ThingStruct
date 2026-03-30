@@ -14,12 +14,25 @@ struct LibraryRootView: View {
 
         NavigationStack(path: $store.libraryNavigationPath) {
             List {
-                Section("Planning") {
+                Section {
+                    LibraryStatusSummaryRow(
+                        todayStatus: store.isLoaded
+                            ? (store.requiresTemplateSelection(for: .today()) ? "Choose today" : "Ready")
+                            : "Loading",
+                        templateCount: store.savedTemplates.count,
+                        tintTitle: store.tintPreset.title
+                    )
+                    .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                    .listRowBackground(Color.clear)
+                }
+
+                Section("Workspace") {
                     NavigationLink(value: LibraryDestination.templates) {
                         LibraryEntryRow(
                             title: "Templates",
                             systemImage: "square.stack.3d.up",
-                            subtitle: "Manage saved templates, weekday rules, and tomorrow overrides."
+                            subtitle: "Choose today and manage reusable day structures.",
+                            status: store.savedTemplates.isEmpty ? "Empty" : "\(store.savedTemplates.count)"
                         )
                     }
                 }
@@ -29,21 +42,24 @@ struct LibraryRootView: View {
                         LibraryEntryRow(
                             title: "Settings",
                             systemImage: "paintpalette",
-                            subtitle: "Change the app tint while keeping layered depth in sync."
+                            subtitle: "Tune tint and global visual behavior.",
+                            status: store.tintPreset.title
                         )
                     }
                 }
 
-                Section("Portability") {
+                Section("Data") {
                     NavigationLink(value: LibraryDestination.importExport) {
                         LibraryEntryRow(
                             title: "Import & Export",
                             systemImage: "arrow.up.arrow.down.doc",
-                            subtitle: "Export today's blocks to YAML, or replace today from a YAML file."
+                            subtitle: "Move day plans in and out through YAML.",
+                            status: "YAML"
                         )
                     }
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: LibraryDestination.self) { destination in
@@ -59,6 +75,61 @@ struct LibraryRootView: View {
                 }
             }
         }
+    }
+}
+
+private struct LibraryStatusSummaryRow: View {
+    let todayStatus: String
+    let templateCount: Int
+    let tintTitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Workspace Status")
+                .font(.headline)
+
+            HStack(spacing: 10) {
+                summaryPill(
+                    title: "Today",
+                    value: todayStatus,
+                    systemImage: "calendar"
+                )
+                summaryPill(
+                    title: "Templates",
+                    value: templateCount == 0 ? "None" : "\(templateCount)",
+                    systemImage: "square.stack.3d.up"
+                )
+                summaryPill(
+                    title: "Tint",
+                    value: tintTitle,
+                    systemImage: "paintpalette"
+                )
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color(uiColor: .separator).opacity(0.12), lineWidth: 1)
+        )
+        .padding(.horizontal, 4)
+    }
+
+    private func summaryPill(title: String, value: String, systemImage: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -179,17 +250,26 @@ private struct LibraryEntryRow: View {
     let title: String
     let systemImage: String
     let subtitle: String
+    var status: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: systemImage)
-                .font(.title3)
+                .font(.body.weight(.semibold))
                 .foregroundStyle(.tint)
-                .frame(width: 28, height: 28)
+                .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.body.weight(.semibold))
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title)
+                        .font(.body.weight(.semibold))
+
+                    if let status {
+                        Text(status)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 Text(subtitle)
                     .font(.footnote)

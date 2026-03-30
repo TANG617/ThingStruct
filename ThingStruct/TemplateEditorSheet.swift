@@ -86,11 +86,11 @@ struct TemplateEditorSheet: View {
 
                     Button {
                         editorSession = TemplateBlockEditorSession(
-                            title: "New Base Block",
+                            title: "New Block",
                             draft: .base()
                         )
                     } label: {
-                        Label("Add Base Block", systemImage: "plus.rectangle.on.rectangle")
+                        Label("Add Block", systemImage: "plus.rectangle.on.rectangle")
                     }
                 }
 
@@ -370,10 +370,6 @@ private struct TemplateBlockRow: View {
     let onAddOverlay: () -> Void
     let onDelete: () -> Void
 
-    private var layerBadgeTitle: String {
-        block.layerIndex.timelineLayerBadgeTitle
-    }
-
     private var addChildLayerTitle: String {
         block.layerIndex.addNextTimelineLayerActionTitle
     }
@@ -389,9 +385,6 @@ private struct TemplateBlockRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(layerBadgeTitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             HStack(spacing: 12) {

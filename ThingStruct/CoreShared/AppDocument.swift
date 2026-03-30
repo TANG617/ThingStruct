@@ -8,17 +8,46 @@ public struct ThingStructDocument: Equatable, Codable, Sendable {
     public var savedTemplates: [SavedDayTemplate]
     public var weekdayRules: [WeekdayTemplateRule]
     public var overrides: [DateTemplateOverride]
+    public var daySelections: [DayTemplateSelection]
 
     public init(
         dayPlans: [DayPlan] = [],
         savedTemplates: [SavedDayTemplate] = [],
         weekdayRules: [WeekdayTemplateRule] = [],
-        overrides: [DateTemplateOverride] = []
+        overrides: [DateTemplateOverride] = [],
+        daySelections: [DayTemplateSelection] = []
     ) {
         self.dayPlans = dayPlans
         self.savedTemplates = savedTemplates
         self.weekdayRules = weekdayRules
         self.overrides = overrides
+        self.daySelections = daySelections
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case dayPlans
+        case savedTemplates
+        case weekdayRules
+        case overrides
+        case daySelections
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dayPlans = try container.decodeIfPresent([DayPlan].self, forKey: .dayPlans) ?? []
+        savedTemplates = try container.decodeIfPresent([SavedDayTemplate].self, forKey: .savedTemplates) ?? []
+        weekdayRules = try container.decodeIfPresent([WeekdayTemplateRule].self, forKey: .weekdayRules) ?? []
+        overrides = try container.decodeIfPresent([DateTemplateOverride].self, forKey: .overrides) ?? []
+        daySelections = try container.decodeIfPresent([DayTemplateSelection].self, forKey: .daySelections) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(dayPlans, forKey: .dayPlans)
+        try container.encode(savedTemplates, forKey: .savedTemplates)
+        try container.encode(weekdayRules, forKey: .weekdayRules)
+        try container.encode(overrides, forKey: .overrides)
+        try container.encode(daySelections, forKey: .daySelections)
     }
 }
 
@@ -27,6 +56,20 @@ public extension ThingStructDocument {
     // 原因是当前文档规模还小，保持序列化结构简单、直白，比提前做复杂优化更重要。
     func dayPlan(for date: LocalDay) -> DayPlan? {
         dayPlans.first(where: { $0.date == date })
+    }
+
+    func daySelection(for date: LocalDay) -> DayTemplateSelection? {
+        daySelections
+            .filter { $0.date == date }
+            .sorted { lhs, rhs in
+                if lhs.selectedAt != rhs.selectedAt {
+                    return lhs.selectedAt < rhs.selectedAt
+                }
+                let lhsID = lhs.selectedTemplateID?.uuidString ?? ""
+                let rhsID = rhs.selectedTemplateID?.uuidString ?? ""
+                return lhsID < rhsID
+            }
+            .last
     }
 }
 
@@ -94,7 +137,8 @@ public enum SampleDataFactory {
             dayPlans: sourcePlans + [tomorrowPlan],
             savedTemplates: savedTemplates,
             weekdayRules: weekdayRules,
-            overrides: []
+            overrides: [],
+            daySelections: []
         )
     }
 

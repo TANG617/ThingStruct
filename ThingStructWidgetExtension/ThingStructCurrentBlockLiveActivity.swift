@@ -212,25 +212,10 @@ private struct ThingStructLiveActivityDetailContent: View {
         title: String,
         intent: CompleteLiveActivityTaskIntent
     ) -> some View {
-        // Live Activity 按钮同样通过 intent 触发，而不是直接持有 store/repository。
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("Current task", systemImage: "checklist")
-                    .font(metaFont.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                Text(title)
-                    .font(taskFont)
-                    .foregroundStyle(.primary)
-                    .lineLimit(taskLineLimit)
-                    .multilineTextAlignment(.leading)
-            }
-
-            Spacer(minLength: 0)
-
-            Button(intent: intent) {
-                Image(systemName: "checkmark.circle.fill")
+        // 把整行都做成显式动作按钮，避免只有尾部小图标可点。
+        Button(intent: intent) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "circle")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(themeTint)
                     .frame(width: 34, height: 34)
@@ -238,10 +223,43 @@ private struct ThingStructLiveActivityDetailContent: View {
                         Circle()
                             .fill(themeTint.opacity(0.14))
                     )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Current task", systemImage: "checklist")
+                        .font(metaFont.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    Text(title)
+                        .font(taskFont)
+                        .foregroundStyle(.primary)
+                        .lineLimit(taskLineLimit)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 0)
+
+                Text("Complete")
+                    .font(metaFont.weight(.semibold))
+                    .foregroundStyle(themeTint)
+                    .lineLimit(1)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Complete current live activity task")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(themeTint.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(themeTint.opacity(0.18), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Complete current live activity task")
+        .accessibilityHint("Marks \(title) complete")
     }
 
     private var completionState: some View {

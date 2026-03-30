@@ -15,20 +15,19 @@ extension Int {
     }
 
     var timelineLayerBadgeTitle: String {
-        // layer 0 叫 Base，更高层叫 L1/L2/L3...
-        self == 0 ? "Base" : "L\(self)"
+        self == 0 ? "Block" : "Overlay"
     }
 
     var nextTimelineLayerTitle: String {
-        (self + 1).timelineLayerBadgeTitle
+        "Overlay"
     }
 
     var addNextTimelineLayerActionTitle: String {
-        "Add \(nextTimelineLayerTitle)"
+        "Add Overlay"
     }
 
     var newNextTimelineLayerActionTitle: String {
-        "New \(nextTimelineLayerTitle)"
+        "New Overlay"
     }
 }
 

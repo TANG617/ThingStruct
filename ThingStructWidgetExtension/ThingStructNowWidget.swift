@@ -78,6 +78,7 @@ struct ThingStructNowWidgetProvider: TimelineProvider {
                 snapshot: ThingStructWidgetSnapshot(
                     date: LocalDay(date: date),
                     minuteOfDay: date.minuteOfDay,
+                    requiresTemplateSelection: false,
                     currentBlockTitle: nil,
                     currentBlockTimeRangeText: nil,
                     blocks: [],
@@ -145,13 +146,21 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 
     private var remainingSummary: String {
-        entry.snapshot.remainingTaskCount == 0
+        if entry.snapshot.requiresTemplateSelection {
+            return "Choose today"
+        }
+
+        return entry.snapshot.remainingTaskCount == 0
             ? "All caught up"
             : "\(entry.snapshot.remainingTaskCount) remaining"
     }
 
     private var accessoryInlineText: String {
         // accessoryInline 空间极窄，所以只保留一行核心文本。
+        if entry.snapshot.requiresTemplateSelection {
+            return entry.snapshot.statusMessage ?? "Choose today’s template"
+        }
+
         if let title = entry.snapshot.currentBlockTitle,
            let timeRange = entry.snapshot.currentBlockTimeRangeText {
             let endTime = timeRange.split(separator: "-").last?
@@ -163,7 +172,11 @@ private struct ThingStructNowWidgetEntryView: View {
     }
 
     private var accessoryCircularValue: String {
-        entry.snapshot.remainingTaskCount == 0
+        if entry.snapshot.requiresTemplateSelection {
+            return "!"
+        }
+
+        return entry.snapshot.remainingTaskCount == 0
             ? "0"
             : "\(min(entry.snapshot.remainingTaskCount, 9))"
     }
@@ -303,7 +316,7 @@ private struct ThingStructNowWidgetEntryView: View {
     private var currentBlockSummary: some View {
         // 当前 block 的信息卡片。
         VStack(alignment: .leading, spacing: 4) {
-            Text(entry.snapshot.currentBlockTitle ?? "No plan for right now")
+            Text(entry.snapshot.currentBlockTitle ?? (entry.snapshot.requiresTemplateSelection ? "Choose today’s template" : "No plan for right now"))
                 .font(.headline.weight(.semibold))
                 .lineLimit(2)
 
@@ -311,6 +324,11 @@ private struct ThingStructNowWidgetEntryView: View {
                 Text(timeRange)
                     .font(.caption)
                     .foregroundStyle(currentStyle.badgeForeground)
+            } else if entry.snapshot.requiresTemplateSelection {
+                Text(entry.snapshot.statusMessage ?? "Open ThingStruct to choose today.")
+                    .font(.caption)
+                    .foregroundStyle(currentStyle.badgeForeground)
+                    .lineLimit(2)
             }
         }
         .padding(12)
@@ -341,10 +359,19 @@ private struct ThingStructNowWidgetEntryView: View {
     private func emptyState(isCompact: Bool) -> some View {
         // 没有任务可显示时，用状态文案代替空列表。
         VStack(alignment: .leading, spacing: 6) {
-            Text(entry.snapshot.remainingTaskCount == 0 ? "Nothing to check off" : "Tasks are up to date")
+            Text(
+                entry.snapshot.requiresTemplateSelection
+                    ? "Choose today’s template"
+                    : (entry.snapshot.remainingTaskCount == 0 ? "Nothing to check off" : "Tasks are up to date")
+            )
                 .font(isCompact ? .footnote.weight(.semibold) : .subheadline.weight(.semibold))
 
-            Text(entry.snapshot.statusMessage ?? "Open ThingStruct to review the full plan.")
+            Text(
+                entry.snapshot.statusMessage
+                    ?? (entry.snapshot.requiresTemplateSelection
+                        ? "Open ThingStruct to choose today before the widget starts tracking the day."
+                        : "Open ThingStruct to review the full plan.")
+            )
                 .font(isCompact ? .caption2 : .caption)
                 .foregroundStyle(currentStyle.badgeForeground)
                 .lineLimit(isCompact ? 4 : 3)
@@ -510,6 +537,10 @@ private struct ThingStructNowWidgetEntryView: View {
 
 private extension ThingStructWidgetSnapshot {
     var destinationURL: URL? {
+        if requiresTemplateSelection {
+            return ThingStructSystemRoute.templates(source: .widget).url
+        }
+
         // 点击 widget 后跳回 app 时，优先把用户带到“当前块/当前任务”。
         let currentBlockID = blocks.first(where: \.isCurrent)?.blockID ?? blocks.first?.blockID
         let currentTaskID = tasks.first(where: \.isCurrentBlock)?.taskID ?? tasks.first?.taskID
@@ -531,6 +562,7 @@ private extension ThingStructWidgetSnapshot {
         ThingStructWidgetSnapshot(
             date: LocalDay(year: 2026, month: 3, day: 22),
             minuteOfDay: 10 * 60,
+            requiresTemplateSelection: false,
             currentBlockTitle: "Focus Sprint",
             currentBlockTimeRangeText: "09:00 - 11:00",
             blocks: [
@@ -606,6 +638,7 @@ private extension ThingStructWidgetSnapshot {
         ThingStructWidgetSnapshot(
             date: LocalDay(year: 2026, month: 3, day: 22),
             minuteOfDay: 13 * 60 + 30,
+            requiresTemplateSelection: false,
             currentBlockTitle: "Lunch",
             currentBlockTimeRangeText: "13:00 - 14:00",
             blocks: [

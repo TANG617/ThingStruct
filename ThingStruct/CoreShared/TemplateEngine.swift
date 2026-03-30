@@ -76,12 +76,108 @@ public enum TemplateEngine {
         for date: LocalDay,
         savedTemplates: [SavedDayTemplate],
         weekdayRules: [WeekdayTemplateRule],
-        overrides: [DateTemplateOverride]
+        overrides: [DateTemplateOverride],
+        daySelections: [DayTemplateSelection] = []
     ) throws -> SavedDayTemplate? {
-        // 这里体现了模板选择优先级：
-        // 具体日期 override > 星期规则 weekday rule > 没有模板(nil)
         let templateByID = Dictionary(uniqueKeysWithValues: savedTemplates.map { ($0.id, $0) })
 
+        if let selection = latestDaySelection(for: date, in: daySelections) {
+            guard let selectedTemplateID = selection.selectedTemplateID else {
+                return nil
+            }
+
+            guard let template = templateByID[selectedTemplateID] else {
+                throw ThingStructCoreError.missingSavedTemplate(selectedTemplateID)
+            }
+
+            return template
+        }
+
+        return try automaticSavedTemplate(
+            for: date,
+            templateByID: templateByID,
+            weekdayRules: weekdayRules,
+            overrides: overrides
+        )
+    }
+
+    public static func requiresExplicitTemplateSelection(
+        for date: LocalDay,
+        today: LocalDay,
+        existingDayPlans: [DayPlan],
+        daySelections: [DayTemplateSelection]
+    ) throws -> Bool {
+        guard date == today else {
+            return false
+        }
+
+        if try uniqueDayPlan(for: date, in: existingDayPlans) != nil {
+            return false
+        }
+
+        return latestDaySelection(for: date, in: daySelections) == nil
+    }
+
+    public static func chooseTemplate(
+        for date: LocalDay,
+        templateID: UUID?,
+        source: DayTemplateSelectionSource,
+        existingDayPlans: [DayPlan],
+        savedTemplates: [SavedDayTemplate],
+        selectedAt: Date = Date(),
+        forceReplace: Bool = false
+    ) throws -> DayTemplateChoiceOutcome {
+        let existingPlan = try uniqueDayPlan(for: date, in: existingDayPlans)
+
+        if let existingPlan, !forceReplace, (existingPlan.hasUserEdits || existingPlan.containsCompletedTasks) {
+            return .requiresForceReplace
+        }
+
+        let selection = DayTemplateSelection(
+            date: date,
+            selectedTemplateID: templateID,
+            source: source,
+            selectedAt: selectedAt
+        )
+        let dayPlanID = existingPlan?.id ?? UUID()
+
+        if let templateID {
+            guard let template = savedTemplates.first(where: { $0.id == templateID }) else {
+                throw ThingStructCoreError.missingSavedTemplate(templateID)
+            }
+
+            return .applied(
+                selection: selection,
+                dayPlan: try instantiateDayPlan(
+                    from: template,
+                    for: date,
+                    dayPlanID: dayPlanID,
+                    generatedAt: selectedAt
+                )
+            )
+        }
+
+        return .applied(
+            selection: selection,
+            dayPlan: DayPlan(
+                id: dayPlanID,
+                date: date,
+                sourceSavedTemplateID: nil,
+                lastGeneratedAt: selectedAt,
+                hasUserEdits: false,
+                blocks: []
+            )
+        )
+    }
+
+    private static func automaticSavedTemplate(
+        for date: LocalDay,
+        templateByID: [UUID: SavedDayTemplate],
+        weekdayRules: [WeekdayTemplateRule],
+        overrides: [DateTemplateOverride]
+    ) throws -> SavedDayTemplate? {
+        // 这里体现了自动模板选择优先级：
+        // 具体日期 override > 星期规则 weekday rule > 没有模板(nil)
         var overrideByDate: [LocalDay: UUID] = [:]
         for override in overrides {
             if overrideByDate.updateValue(override.savedTemplateID, forKey: override.date) != nil {
@@ -197,6 +293,7 @@ public enum TemplateEngine {
         savedTemplates: [SavedDayTemplate],
         weekdayRules: [WeekdayTemplateRule],
         overrides: [DateTemplateOverride],
+        daySelections: [DayTemplateSelection] = [],
         generatedAt: Date = Date()
     ) throws -> DayPlan {
         // 已存在的 DayPlan 永远优先视为真实来源，不会被模板再次覆盖。
@@ -208,7 +305,8 @@ public enum TemplateEngine {
             for: date,
             savedTemplates: savedTemplates,
             weekdayRules: weekdayRules,
-            overrides: overrides
+            overrides: overrides,
+            daySelections: daySelections
         ) else {
             // 没匹配到模板不是错误，而是一种合法状态：当天就是空计划。
             return DayPlan(
@@ -234,6 +332,7 @@ public enum TemplateEngine {
         savedTemplates: [SavedDayTemplate],
         weekdayRules: [WeekdayTemplateRule],
         overrides: [DateTemplateOverride],
+        daySelections: [DayTemplateSelection] = [],
         generatedAt: Date = Date()
     ) throws -> DayPlan {
         // regenerate 是“保守”的未来计划再生成：
@@ -258,7 +357,8 @@ public enum TemplateEngine {
             for: date,
             savedTemplates: savedTemplates,
             weekdayRules: weekdayRules,
-            overrides: overrides
+            overrides: overrides,
+            daySelections: daySelections
         ) else {
             return DayPlan(
                 id: existingPlan.id,
@@ -284,6 +384,7 @@ public enum TemplateEngine {
         savedTemplates: [SavedDayTemplate],
         weekdayRules: [WeekdayTemplateRule],
         overrides: [DateTemplateOverride],
+        daySelections: [DayTemplateSelection] = [],
         generatedAt: Date = Date()
     ) throws -> DayPlan {
         let existingPlan = try uniqueDayPlan(for: date, in: existingDayPlans)
@@ -293,7 +394,8 @@ public enum TemplateEngine {
             for: date,
             savedTemplates: savedTemplates,
             weekdayRules: weekdayRules,
-            overrides: overrides
+            overrides: overrides,
+            daySelections: daySelections
         ) else {
             return DayPlan(
                 id: dayPlanID,
@@ -415,6 +517,23 @@ public enum TemplateEngine {
         }
 
         return matchingPlans.first
+    }
+
+    private static func latestDaySelection(
+        for date: LocalDay,
+        in daySelections: [DayTemplateSelection]
+    ) -> DayTemplateSelection? {
+        daySelections
+            .filter { $0.date == date }
+            .sorted { lhs, rhs in
+                if lhs.selectedAt != rhs.selectedAt {
+                    return lhs.selectedAt < rhs.selectedAt
+                }
+                let lhsID = lhs.selectedTemplateID?.uuidString ?? ""
+                let rhsID = rhs.selectedTemplateID?.uuidString ?? ""
+                return lhsID < rhsID
+            }
+            .last
     }
 
     private static func deepCopy(blocks: [BlockTemplate]) -> [BlockTemplate] {
